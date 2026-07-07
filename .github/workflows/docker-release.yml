@@ -1,0 +1,130 @@
+name: VerdantFlare API Release
+
+on:
+  push:
+    branches:
+      - release
+
+env:
+  IMAGE_NAME: verdantflare
+  IMAGE_VERSION: api-v1.0.0
+  BASE_IMG: alpine:3.22
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Register app version
+        run: |
+          APP_VERSION="${IMAGE_VERSION#api-}"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$APP_VERSION"
+
+      - name: Build frontend
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace/web \
+            -e VITE_REACT_APP_VERSION="$APP_VERSION" \
+            oven/bun:1 \
+            sh -lc '
+              set -eu
+              bun install --frozen-lockfile
+              for app in default classic; do
+                echo "Building frontend ${app}"
+                cd "/workspace/web/${app}"
+                if [ "${app}" = "default" ]; then
+                  DISABLE_ESLINT_PLUGIN=true bun run build
+                else
+                  bun run build
+                fi
+              done
+            '
+
+      - name: Build backend
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e APP_VERSION="$APP_VERSION" \
+            golang:1.26-alpine \
+            sh .beagle/build.sh
+
+      - name: Verify release artifacts
+        run: |
+          test -x build/new-api-linux-amd64
+          test -x build/new-api-linux-arm64
+          test -d web/default/dist
+          test -d web/classic/dist
+          ls -lh build/new-api*
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Aliyun Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.cn-qingdao.aliyuncs.com
+          username: ${{ secrets.REGISTRY_USER_ALIYUN }}
+          password: ${{ secrets.REGISTRY_PASSWORD_ALIYUN }}
+
+      - name: Build and push API multi-platform image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./.beagle/dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          build-args: |
+            BASE_IMG=${{ env.BASE_IMG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push API AMD64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./.beagle/dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-amd64
+          build-args: |
+            BASE_IMG=${{ env.BASE_IMG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push API ARM64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./.beagle/dockerfile
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-arm64
+          build-args: |
+            BASE_IMG=${{ env.BASE_IMG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image build success
+        run: |
+          echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION} built and pushed successfully."
+          echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-amd64 built and pushed successfully."
+          echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-arm64 built and pushed successfully."

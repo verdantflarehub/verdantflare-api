@@ -1,0 +1,17 @@
+ARG BASE_IMG=alpine:3.22
+
+FROM ${BASE_IMG}
+
+ARG TARGETARCH=amd64
+ENV TZ=Asia/Shanghai
+
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && update-ca-certificates
+
+COPY build/new-api-linux-${TARGETARCH} /new-api
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
+EXPOSE 3000
+WORKDIR /data
+ENTRYPOINT ["/new-api"]

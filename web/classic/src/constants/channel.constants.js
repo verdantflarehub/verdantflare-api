@@ -175,6 +175,11 @@ export const CHANNEL_OPTIONS = [
     label: '豆包视频',
   },
   {
+    value: 59,
+    color: 'blue',
+    label: '京东 Seedance',
+  },
+  {
     value: 55,
     color: 'green',
     label: 'Sora',
