@@ -98,11 +98,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	upstreamTaskID := strings.TrimSpace(common.Interface2String(jdResp.Data))
 	if jdResp.Code != 1 || upstreamTaskID == "" {
-		msg := strings.TrimSpace(jdResp.Msg)
+		msg := whiteLabelUpstreamMessage(jdResp.Msg)
 		if msg == "" {
-			msg = "jd seedance create failed"
+			msg = "video generation create failed"
 		}
-		return "", responseBody, service.TaskErrorWrapper(fmt.Errorf("%s", msg), "jd_seedance_create_failed", http.StatusBadGateway)
+		return "", responseBody, service.TaskErrorWrapper(fmt.Errorf("%s", msg), "video_generation_create_failed", http.StatusBadGateway)
 	}
 
 	video := dto.NewOpenAIVideo()
@@ -157,9 +157,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return nil, errors.Wrap(err, "unmarshal query response failed")
 	}
 	if resp.Code != 1 {
-		msg := strings.TrimSpace(resp.Msg)
+		msg := whiteLabelUpstreamMessage(resp.Msg)
 		if msg == "" {
-			msg = "jd seedance query failed"
+			msg = "video generation query failed"
 		}
 		return nil, fmt.Errorf("%s", msg)
 	}
@@ -254,6 +254,25 @@ func buildURL(baseURL, path string) string {
 		baseURL = defaultBaseURL
 	}
 	return baseURL + path
+}
+
+func whiteLabelUpstreamMessage(message string) string {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(
+		"JD Seedance", "video generation",
+		"JDSeedance", "video generation",
+		"JD seedance", "video generation",
+		"jd seedance", "video generation",
+		"jd-seedance", "video-generation",
+		"JD-Seedance", "video-generation",
+		"Seedance", "video generation",
+		"seedance", "video generation",
+		"京东", "upstream",
+	)
+	return replacer.Replace(msg)
 }
 
 func parseStoredQueryData(raw []byte) (queryData, bool) {

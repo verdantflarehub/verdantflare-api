@@ -32,6 +32,11 @@ func TestChannelOwnerNameUsesAdaptorChannelName(t *testing.T) {
 			expected:    "openrouter",
 		},
 		{
+			name:        "jd seedance white label",
+			channelType: constant.ChannelTypeJDSeedance,
+			expected:    "verdantflare",
+		},
+		{
 			name:        "azure fallback",
 			channelType: constant.ChannelTypeAzure,
 			expected:    "azure",

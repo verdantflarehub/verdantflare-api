@@ -127,7 +127,12 @@ func TestDoResponseRejectsFailedCreateEnvelope(t *testing.T) {
 	taskID, _, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
 	require.Empty(t, taskID)
 	require.NotNil(t, taskErr)
-	require.Equal(t, "jd_seedance_create_failed", taskErr.Code)
+	require.Equal(t, "video_generation_create_failed", taskErr.Code)
+}
+
+func TestWhiteLabelUpstreamMessageRemovesProviderNames(t *testing.T) {
+	require.Equal(t, "video generation quota exceeded", whiteLabelUpstreamMessage("JD Seedance quota exceeded"))
+	require.Equal(t, "upstream request failed", whiteLabelUpstreamMessage("京东 request failed"))
 }
 
 func TestFetchTaskPostsDanceQuery(t *testing.T) {
