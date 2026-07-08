@@ -1,3 +1,4 @@
+import fs from 'fs'
 import path from 'path'
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
@@ -10,6 +11,12 @@ const semiUiDir = path.resolve(
   path.dirname(require.resolve('@douyinfe/semi-ui')),
   '../..',
 )
+const dateFnsDir =
+  [
+    path.resolve(semiUiDir, 'node_modules/date-fns'),
+    path.resolve(__dirname, '../node_modules/date-fns'),
+  ].find((dir) => fs.existsSync(dir)) ||
+  path.resolve(__dirname, '../node_modules/date-fns')
 
 export default defineConfig(({ envMode }) => {
   const env = loadEnv({ mode: envMode, prefixes: ['VITE_'] })
@@ -47,7 +54,7 @@ export default defineConfig(({ envMode }) => {
           semiUiDir,
           'dist/css/semi.css',
         ),
-        'date-fns': path.resolve(semiUiDir, 'node_modules/date-fns'),
+        'date-fns': dateFnsDir,
       },
     },
     html: {
