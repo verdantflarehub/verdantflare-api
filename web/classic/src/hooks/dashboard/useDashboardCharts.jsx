@@ -36,6 +36,7 @@ import {
   initializeMaps,
   processUserData,
 } from '../../helpers/dashboard';
+import { initializeVChartEnvironment } from '../../helpers/vchart';
 
 const USER_COLORS = [
   '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
@@ -609,6 +610,7 @@ export const useDashboardCharts = (
 
   // ========== 初始化图表主题 ==========
   useEffect(() => {
+    initializeVChartEnvironment();
     initVChartSemiTheme({
       isWatchingThemeSwitch: true,
     });

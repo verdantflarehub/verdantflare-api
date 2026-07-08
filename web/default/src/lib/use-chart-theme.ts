@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useEffect, useRef, useState } from 'react'
 
 import { useTheme } from '@/context/theme-provider'
+import { initializeVChartEnvironment } from '@/lib/vchart'
 
 /**
  * Lazy-load VChart's `ThemeManager` and switch its theme to follow the
@@ -40,6 +41,7 @@ export function useChartTheme() {
     let cancelled = false
     const updateTheme = async () => {
       setThemeReady(false)
+      initializeVChartEnvironment()
       if (!themeManagerPromise) {
         themeManagerPromise = import('@visactor/vchart').then(
           (m) => m.ThemeManager

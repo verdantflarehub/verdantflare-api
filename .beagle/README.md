@@ -3,11 +3,11 @@
 <https://github.com/QuantumNous/new-api>
 
 ```bash
-git remote add upstream git@github.com:QuantumNous/new-api.git
+git -C verdantflare-api remote add upstream git@github.com:QuantumNous/new-api.git
 
-git fetch upstream
+git -C verdantflare-api fetch upstream
 
-git merge v1.0.0-rc.15
+git -C verdantflare-api merge v1.0.0-rc.20
 ```
 
 ## build
