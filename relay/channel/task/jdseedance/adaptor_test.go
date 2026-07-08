@@ -115,6 +115,42 @@ func TestDoResponseReturnsPublicTaskIDAndStoresUpstreamID(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"id":"task_local"`)
 }
 
+func TestDoResponseAcceptsZeroCodeSuccessWithObjectTaskID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: ModelJDSeedanceSD,
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			PublicTaskID: "task_local",
+		},
+	}
+	resp := &http.Response{
+		Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"taskId":"jd_task_456"},"msg":"成功"}`)),
+	}
+
+	taskID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
+	require.Nil(t, taskErr)
+	require.Equal(t, "jd_task_456", taskID)
+	require.JSONEq(t, `{"code":0,"data":{"taskId":"jd_task_456"},"msg":"成功"}`, string(taskData))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"id":"task_local"`)
+}
+
+func TestDoResponseAcceptsNestedSnakeTaskID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_local"}}
+	resp := &http.Response{
+		Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"result":{"task_id":"jd_task_789"}},"msg":"success"}`)),
+	}
+
+	taskID, _, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
+	require.Nil(t, taskErr)
+	require.Equal(t, "jd_task_789", taskID)
+}
+
 func TestDoResponseRejectsFailedCreateEnvelope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -128,6 +164,21 @@ func TestDoResponseRejectsFailedCreateEnvelope(t *testing.T) {
 	require.Empty(t, taskID)
 	require.NotNil(t, taskErr)
 	require.Equal(t, "video_generation_create_failed", taskErr.Code)
+}
+
+func TestDoResponseRejectsSuccessfulEnvelopeWithoutTaskID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_local"}}
+	resp := &http.Response{
+		Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{},"msg":"成功"}`)),
+	}
+
+	taskID, _, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
+	require.Empty(t, taskID)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_response", taskErr.Code)
 }
 
 func TestWhiteLabelUpstreamMessageRemovesProviderNames(t *testing.T) {
@@ -169,6 +220,19 @@ func TestParseTaskResultStatusAndURL(t *testing.T) {
 	require.Equal(t, "SUCCESS", taskInfo.Status)
 	require.Equal(t, "100%", taskInfo.Progress)
 	require.Equal(t, "https://example.com/result.mp4", taskInfo.Url)
+
+	taskInfo, err = (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"code": 0,
+		"data": {
+			"taskId": "jd_task_456",
+			"state": "running"
+		},
+		"msg": "成功"
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, "jd_task_456", taskInfo.TaskID)
+	require.Equal(t, "IN_PROGRESS", taskInfo.Status)
+	require.Equal(t, "50%", taskInfo.Progress)
 
 	taskInfo, err = (&TaskAdaptor{}).ParseTaskResult([]byte(`{
 		"code": 1,

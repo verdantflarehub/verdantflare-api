@@ -96,13 +96,16 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if err := common.Unmarshal(responseBody, &jdResp); err != nil {
 		return "", responseBody, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusBadGateway)
 	}
-	upstreamTaskID := strings.TrimSpace(common.Interface2String(jdResp.Data))
-	if jdResp.Code != 1 || upstreamTaskID == "" {
+	if !isSuccessfulEnvelope(jdResp.Code, jdResp.Msg) {
 		msg := whiteLabelUpstreamMessage(jdResp.Msg)
 		if msg == "" {
 			msg = "video generation create failed"
 		}
 		return "", responseBody, service.TaskErrorWrapper(fmt.Errorf("%s", msg), "video_generation_create_failed", http.StatusBadGateway)
+	}
+	upstreamTaskID := extractCreateTaskID(jdResp.Data)
+	if upstreamTaskID == "" {
+		return "", responseBody, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusBadGateway)
 	}
 
 	video := dto.NewOpenAIVideo()
@@ -156,7 +159,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if err := common.Unmarshal(respBody, &resp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal query response failed")
 	}
-	if resp.Code != 1 {
+	if !isSuccessfulEnvelope(resp.Code, resp.Msg) {
 		msg := whiteLabelUpstreamMessage(resp.Msg)
 		if msg == "" {
 			msg = "video generation query failed"
@@ -174,10 +177,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 	taskInfo := &relaycommon.TaskInfo{
 		Code:   0,
-		TaskID: data.ID,
+		TaskID: firstNonEmpty(data.ID, data.TaskID, data.TaskIDSnake),
 	}
 
-	switch strings.ToLower(strings.TrimSpace(data.Status)) {
+	switch strings.ToLower(strings.TrimSpace(firstNonEmpty(data.Status, data.State))) {
 	case "pending", "queued", "submitted":
 		taskInfo.Status = model.TaskStatusQueued
 		taskInfo.Progress = taskcommon.ProgressQueued
@@ -275,6 +278,72 @@ func whiteLabelUpstreamMessage(message string) string {
 	return replacer.Replace(msg)
 }
 
+func isSuccessfulEnvelope(code int, msg string) bool {
+	switch code {
+	case 1, 200:
+		return true
+	case 0:
+		return isSuccessfulMessage(msg)
+	default:
+		return false
+	}
+}
+
+func isSuccessfulMessage(msg string) bool {
+	msg = strings.ToLower(strings.TrimSpace(msg))
+	return msg == "" || msg == "success" || msg == "succeeded" || msg == "ok" || msg == "成功"
+}
+
+func extractCreateTaskID(data any) string {
+	switch value := data.(type) {
+	case nil:
+		return ""
+	case string:
+		return extractCreateTaskIDFromString(value)
+	case map[string]any:
+		return extractCreateTaskIDFromMap(value)
+	case []any:
+		for _, item := range value {
+			if taskID := extractCreateTaskID(item); taskID != "" {
+				return taskID
+			}
+		}
+		return ""
+	default:
+		return strings.TrimSpace(common.Interface2String(value))
+	}
+}
+
+func extractCreateTaskIDFromString(raw string) string {
+	taskID := strings.TrimSpace(raw)
+	if taskID == "" {
+		return ""
+	}
+	if strings.HasPrefix(taskID, "{") {
+		var data map[string]any
+		if err := common.Unmarshal([]byte(taskID), &data); err == nil {
+			if nestedTaskID := extractCreateTaskIDFromMap(data); nestedTaskID != "" {
+				return nestedTaskID
+			}
+		}
+	}
+	return taskID
+}
+
+func extractCreateTaskIDFromMap(data map[string]any) string {
+	for _, key := range []string{"task_id", "taskId", "taskID", "id", "job_id", "jobId"} {
+		if taskID := extractCreateTaskID(data[key]); taskID != "" {
+			return taskID
+		}
+	}
+	for _, key := range []string{"data", "result", "task"} {
+		if taskID := extractCreateTaskID(data[key]); taskID != "" {
+			return taskID
+		}
+	}
+	return ""
+}
+
 func parseStoredQueryData(raw []byte) (queryData, bool) {
 	var resp queryResponse
 	if err := common.Unmarshal(raw, &resp); err != nil || len(resp.Data) == 0 {
@@ -351,4 +420,13 @@ func setMetadataIfNotZero(video *dto.OpenAIVideo, key string, val any) {
 			video.SetMetadata(key, v)
 		}
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

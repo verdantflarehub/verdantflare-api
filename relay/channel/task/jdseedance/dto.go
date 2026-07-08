@@ -58,8 +58,11 @@ type queryResponse struct {
 
 type queryData struct {
 	ID                    string  `json:"id"`
+	TaskID                string  `json:"taskId"`
+	TaskIDSnake           string  `json:"task_id"`
 	Model                 string  `json:"model"`
 	Status                string  `json:"status"`
+	State                 string  `json:"state"`
 	Content               any     `json:"content"`
 	VideoURL              string  `json:"video_url,omitempty"`
 	URL                   string  `json:"url,omitempty"`
