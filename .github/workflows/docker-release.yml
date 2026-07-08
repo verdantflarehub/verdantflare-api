@@ -7,6 +7,7 @@ on:
 
 env:
   IMAGE_NAME: verdantflare
+  IMAGE_VERSION: api-v1.0.0
   BASE_IMG: alpine:3.22
 
 jobs:
@@ -18,18 +19,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Register app version
-        id: release_version
         run: |
-          SHORT_SHA="${GITHUB_SHA::12}"
-          IMAGE_VERSION="api-${SHORT_SHA}"
           APP_VERSION="${IMAGE_VERSION#api-}"
-          echo "IMAGE_VERSION=$IMAGE_VERSION" >> "$GITHUB_ENV"
           echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
-          echo "image_version=$IMAGE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "IMAGE_VERSION=$IMAGE_VERSION"
           echo "APP_VERSION=$APP_VERSION"
 
-      - name: Build frontend
+      - name: Build frontend (default)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
@@ -39,15 +34,23 @@ jobs:
             sh -lc '
               set -eu
               bun install --frozen-lockfile
-              for app in default classic; do
-                echo "Building frontend ${app}"
-                cd "/workspace/web/${app}"
-                if [ "${app}" = "default" ]; then
-                  DISABLE_ESLINT_PLUGIN=true bun run build
-                else
-                  bun run build
-                fi
-              done
+              cd /workspace/web/default
+              DISABLE_ESLINT_PLUGIN=true bun run build
+            '
+
+      - name: Build frontend (classic)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace/web \
+            -e VITE_REACT_APP_VERSION="$APP_VERSION" \
+            oven/bun:1 \
+            sh -lc '
+              set -eu
+              rm -rf node_modules default/node_modules classic/node_modules
+              bun install --filter ./classic --frozen-lockfile
+              cd /workspace/web/classic
+              bun run build
             '
 
       - name: Build backend
@@ -90,7 +93,7 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ steps.release_version.outputs.image_version }}
+            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
           build-args: |
             BASE_IMG=${{ env.BASE_IMG }}
           cache-from: type=gha
@@ -106,7 +109,7 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ steps.release_version.outputs.image_version }}-amd64
+            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-amd64
           build-args: |
             BASE_IMG=${{ env.BASE_IMG }}
           cache-from: type=gha
@@ -122,7 +125,7 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ steps.release_version.outputs.image_version }}-arm64
+            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-arm64
           build-args: |
             BASE_IMG=${{ env.BASE_IMG }}
           cache-from: type=gha
