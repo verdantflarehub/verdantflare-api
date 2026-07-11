@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -91,6 +92,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
 	}
 	_ = resp.Body.Close()
+	logger.LogInfo(c, fmt.Sprintf("JD Seedance create response: status=%d local_task_id=%s body=%s", resp.StatusCode, info.PublicTaskID, responseBody))
 
 	var jdResp createResponse
 	if err := common.Unmarshal(responseBody, &jdResp); err != nil {
@@ -191,6 +193,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskInfo.Status = model.TaskStatusSuccess
 		taskInfo.Progress = taskcommon.ProgressComplete
 		taskInfo.Url = extractResultURL(data)
+		if data.Usage != nil {
+			taskInfo.CompletionTokens = data.Usage.CompletionTokens
+			taskInfo.TotalTokens = data.Usage.TotalTokens
+		}
 	case "failed", "failure", "canceled", "cancelled":
 		taskInfo.Status = model.TaskStatusFailure
 		taskInfo.Progress = taskcommon.ProgressComplete
@@ -234,6 +240,23 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		setMetadataIfNotZero(video, "duration", data.Duration)
 		setMetadataIfNotZero(video, "resolution", data.Resolution)
 		setMetadataIfNotZero(video, "framespersecond", data.FramesPerSecond)
+		setMetadataIfNotZero(video, "service_tier", data.ServiceTier)
+		setMetadataIfNotZero(video, "updated_at", data.UpdatedAt)
+		if data.Seed != nil {
+			video.SetMetadata("seed", *data.Seed)
+		}
+		if data.ExecutionExpiresAfter != nil {
+			video.SetMetadata("execution_expires_after", *data.ExecutionExpiresAfter)
+		}
+		if data.Priority != nil {
+			video.SetMetadata("priority", *data.Priority)
+		}
+		if data.Draft != nil {
+			video.SetMetadata("draft", *data.Draft)
+		}
+		if data.Usage != nil {
+			video.SetMetadata("usage", data.Usage)
+		}
 		video.SetMetadata("generate_audio", data.GenerateAudio)
 		if task.Status == model.TaskStatusFailure {
 			video.Error = &dto.OpenAIVideoError{
@@ -248,7 +271,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		}
 	}
 
-	return common.Marshal(video)
+	return common.MarshalNoHTMLEscape(video)
 }
 
 func buildURL(baseURL, path string) string {
@@ -416,6 +439,10 @@ func setMetadataIfNotZero(video *dto.OpenAIVideo, key string, val any) {
 			video.SetMetadata(key, v)
 		}
 	case int:
+		if v != 0 {
+			video.SetMetadata(key, v)
+		}
+	case int64:
 		if v != 0 {
 			video.SetMetadata(key, v)
 		}

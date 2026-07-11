@@ -68,15 +68,23 @@ type queryData struct {
 	URL                   string  `json:"url,omitempty"`
 	CreatedAt             int64   `json:"created_at"`
 	UpdatedAt             int64   `json:"updated_at"`
-	Seed                  int     `json:"seed,omitempty"`
+	Seed                  *int    `json:"seed,omitempty"`
 	Resolution            string  `json:"resolution,omitempty"`
 	Ratio                 string  `json:"ratio,omitempty"`
 	Duration              int     `json:"duration,omitempty"`
 	FramesPerSecond       int     `json:"framespersecond,omitempty"`
 	ServiceTier           string  `json:"service_tier,omitempty"`
-	ExecutionExpiresAfter int     `json:"execution_expires_after,omitempty"`
+	ExecutionExpiresAfter *int    `json:"execution_expires_after,omitempty"`
 	GenerateAudio         bool    `json:"generate_audio,omitempty"`
+	Priority              *int    `json:"priority,omitempty"`
+	Draft                 *bool   `json:"draft,omitempty"`
+	Usage                 *usage  `json:"usage,omitempty"`
 	Error                 jdError `json:"error,omitempty"`
+}
+
+type usage struct {
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type jdError struct {

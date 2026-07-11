@@ -212,7 +212,8 @@ func TestParseTaskResultStatusAndURL(t *testing.T) {
 			"status": "success",
 			"content": "https://example.com/result.mp4",
 			"ratio": "16:9",
-			"duration": 11
+			"duration": 11,
+			"usage": {"completion_tokens": 108900, "total_tokens": 108900}
 		},
 		"msg": "success"
 	}`))
@@ -220,6 +221,8 @@ func TestParseTaskResultStatusAndURL(t *testing.T) {
 	require.Equal(t, "SUCCESS", taskInfo.Status)
 	require.Equal(t, "100%", taskInfo.Progress)
 	require.Equal(t, "https://example.com/result.mp4", taskInfo.Url)
+	require.Equal(t, 108900, taskInfo.CompletionTokens)
+	require.Equal(t, 108900, taskInfo.TotalTokens)
 
 	taskInfo, err = (&TaskAdaptor{}).ParseTaskResult([]byte(`{
 		"code": 0,
@@ -278,12 +281,19 @@ func TestConvertToOpenAIVideoIncludesResultMetadata(t *testing.T) {
 			"id": "jd_task_123",
 			"model": "dance-2.0",
 			"status": "success",
-			"content": {"video_url": "https://example.com/result.mp4"},
+			"content": {"video_url": "https://example.com/result.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Signature=abc"},
+			"seed": 97257,
+			"execution_expires_after": 172800,
+			"usage": {"completion_tokens": 108900, "total_tokens": 108900},
+			"priority": 0,
 			"ratio": "16:9",
 			"duration": 11,
 			"resolution": "1920x1080",
 			"framespersecond": 30,
-			"generate_audio": true
+			"generate_audio": true,
+			"draft": false,
+			"service_tier": "default",
+			"updated_at": 121
 		},
 		"msg": "success"
 	}`)
@@ -305,10 +315,19 @@ func TestConvertToOpenAIVideoIncludesResultMetadata(t *testing.T) {
 	require.Equal(t, "task_local", video.ID)
 	require.Equal(t, dto.VideoStatusCompleted, video.Status)
 	require.Equal(t, 100, video.Progress)
-	require.Equal(t, "https://example.com/result.mp4", video.Metadata["url"])
+	require.Equal(t, "https://example.com/result.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Signature=abc", video.Metadata["url"])
+	require.Contains(t, string(body), "&X-Tos-Signature=abc")
+	require.NotContains(t, string(body), `\u0026`)
 	require.Equal(t, "16:9", video.Metadata["ratio"])
 	require.Equal(t, float64(11), video.Metadata["duration"])
 	require.Equal(t, "1920x1080", video.Metadata["resolution"])
 	require.Equal(t, float64(30), video.Metadata["framespersecond"])
 	require.Equal(t, true, video.Metadata["generate_audio"])
+	require.Equal(t, float64(97257), video.Metadata["seed"])
+	require.Equal(t, float64(172800), video.Metadata["execution_expires_after"])
+	require.Equal(t, float64(0), video.Metadata["priority"])
+	require.Equal(t, false, video.Metadata["draft"])
+	require.Equal(t, "default", video.Metadata["service_tier"])
+	require.Equal(t, float64(121), video.Metadata["updated_at"])
+	require.Equal(t, map[string]any{"completion_tokens": float64(108900), "total_tokens": float64(108900)}, video.Metadata["usage"])
 }

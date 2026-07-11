@@ -462,7 +462,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
 
-	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
+	if ch.Type == constant.ChannelTypeJDSeedance {
+		logger.LogInfo(ctx, fmt.Sprintf("JD Seedance query response: status=%d local_task_id=%s upstream_task_id=%s body=%s",
+			resp.StatusCode, task.TaskID, task.GetUpstreamTaskID(), responseBody))
+	} else {
+		logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
+	}
 
 	snap := task.Snapshot()
 
