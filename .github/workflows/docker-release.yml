@@ -10,6 +10,10 @@ env:
   IMAGE_VERSION: api-v1.0.0
   BASE_IMG: alpine:3.22
 
+concurrency:
+  group: verdantflare-api-release
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -94,6 +98,7 @@ jobs:
           sbom: false
           tags: |
             registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-${{ github.sha }}
           build-args: |
             BASE_IMG=${{ env.BASE_IMG }}
           cache-from: type=gha
@@ -134,5 +139,50 @@ jobs:
       - name: Image build success
         run: |
           echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION} built and pushed successfully."
+          echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-${GITHUB_SHA} built and pushed successfully."
           echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-amd64 built and pushed successfully."
           echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-arm64 built and pushed successfully."
+
+  deploy:
+    name: Deploy API to Kubernetes
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure Kubernetes access
+        env:
+          KUBERNETES_SERVER: ${{ secrets.KUBERNETES_SERVER }}
+          KUBERNETES_TOKEN: ${{ secrets.KUBERNETES_TOKEN }}
+          KUBERNETES_CA: ${{ secrets.KUBERNETES_CA }}
+        run: |
+          set -eu
+          test -n "$KUBERNETES_SERVER"
+          test -n "$KUBERNETES_TOKEN"
+
+          if [ -n "$KUBERNETES_CA" ]; then
+            ca_file="$RUNNER_TEMP/kubernetes-ca.crt"
+            printf '%s\n' "$KUBERNETES_CA" > "$ca_file"
+            kubectl config set-cluster verdantflare \
+              --server="$KUBERNETES_SERVER" \
+              --certificate-authority="$ca_file" \
+              --embed-certs=true
+          else
+            kubectl config set-cluster verdantflare --server="$KUBERNETES_SERVER"
+          fi
+
+          kubectl config set-credentials github-actions --token="$KUBERNETES_TOKEN"
+          kubectl config set-context verdantflare \
+            --cluster=verdantflare \
+            --user=github-actions \
+            --namespace=verdantflare
+          kubectl config use-context verdantflare
+
+      - name: Update API deployment
+        run: |
+          image="registry-vpc.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-${GITHUB_SHA}"
+          kubectl set image deployment/new-api new-api="$image"
+          kubectl rollout status deployment/new-api --timeout=5m
+          kubectl get deployment/new-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="new-api")].image}{"\n"}'
