@@ -170,7 +170,9 @@ jobs:
               --certificate-authority="$ca_file" \
               --embed-certs=true
           else
-            kubectl config set-cluster verdantflare --server="$KUBERNETES_SERVER"
+            kubectl config set-cluster verdantflare \
+              --server="$KUBERNETES_SERVER" \
+              --insecure-skip-tls-verify=true
           fi
 
           kubectl config set-credentials github-actions --token="$KUBERNETES_TOKEN"
