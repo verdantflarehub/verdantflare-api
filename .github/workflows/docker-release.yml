@@ -8,7 +8,7 @@ on:
 env:
   IMAGE_NAME: verdantflare
   IMAGE_VERSION: api-v1.0.0
-  BASE_IMG: alpine:3.22
+  BASE_IMG: ghcr.io/open-beagle/alpine:3
 
 concurrency:
   group: verdantflare-api-release
