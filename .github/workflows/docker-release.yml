@@ -184,7 +184,7 @@ jobs:
 
       - name: Update API deployment
         run: |
-          image="registry-vpc.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-${GITHUB_SHA}"
+          image="registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-${GITHUB_SHA}"
           kubectl set image deployment/new-api new-api="$image"
           kubectl rollout status deployment/new-api --timeout=5m
           kubectl get deployment/new-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="new-api")].image}{"\n"}'
