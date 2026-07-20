@@ -166,6 +166,53 @@ func TestDoResponseRejectsFailedCreateEnvelope(t *testing.T) {
 	require.Equal(t, "video_generation_create_failed", taskErr.Code)
 }
 
+func TestDoResponseRejectsImageSafetyError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_local"}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(`{
+			"ErrorCode":"InputImageSensitiveContentDetected.PrivacyInformation",
+			"ErrorMessage":"The request failed because the input image may contain real person. Request id: upstream_request_123"
+		}`)),
+	}
+
+	taskID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
+	require.Empty(t, taskID)
+	require.NotEmpty(t, taskData)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "input_image_safety_check_failed", taskErr.Code)
+	require.Equal(t, "The reference image did not pass the content safety check", taskErr.Message)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.True(t, taskErr.LocalError)
+	require.NotContains(t, taskErr.Message, "upstream_request_123")
+}
+
+func TestDoResponseRejectsOtherTopLevelUpstreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_local"}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(`{
+			"ErrorCode":"InvalidParameter",
+			"ErrorMessage":"The video generation request is invalid"
+		}`)),
+	}
+
+	taskID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
+	require.Empty(t, taskID)
+	require.NotEmpty(t, taskData)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "video_generation_create_failed", taskErr.Code)
+	require.Equal(t, "The video generation request is invalid", taskErr.Message)
+	require.Equal(t, http.StatusBadGateway, taskErr.StatusCode)
+	require.False(t, taskErr.LocalError)
+}
+
 func TestDoResponseRejectsSuccessfulEnvelopeWithoutTaskID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

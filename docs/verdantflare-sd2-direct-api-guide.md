@@ -266,6 +266,7 @@ Invoke-WebRequest -Uri $resultUrl -OutFile "$taskId.mp4"
 | `content is required`                | `messages` 中没有有效内容；增加非空 `text`                                                         |
 | `prompt or text content is required` | 只有媒体没有文本；增加说明媒体用途的提示词                                                         |
 | `invalid ratio`                      | 画幅不在允许列表中；使用 `16:9`、`9:16`、`1:1`、`4:3` 或 `3:4`                                     |
+| `input_image_safety_check_failed`    | 参考图未通过内容安全审核；更换不包含可识别真人或隐私信息的图片后重试                               |
 | 长时间 `queued` / `in_progress`      | 继续查询同一个任务 ID，不要重复创建                                                                |
 | `completed` 没有结果 URL             | 服务端响应不完整；保留任务 ID并联系接口维护方                                                      |
 | 下载 URL 返回 `403` / `410`          | 签名地址过期；重新查询同一任务并下载新地址                                                         |

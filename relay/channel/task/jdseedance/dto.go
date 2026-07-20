@@ -41,9 +41,11 @@ type createRequest struct {
 }
 
 type createResponse struct {
-	Code int    `json:"code"`
-	Data any    `json:"data"`
-	Msg  string `json:"msg"`
+	Code         int    `json:"code"`
+	Data         any    `json:"data"`
+	Msg          string `json:"msg"`
+	ErrorCode    string `json:"ErrorCode"`
+	ErrorMessage string `json:"ErrorMessage"`
 }
 
 type queryRequest struct {

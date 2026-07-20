@@ -98,6 +98,20 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if err := common.Unmarshal(responseBody, &jdResp); err != nil {
 		return "", responseBody, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusBadGateway)
 	}
+	if strings.TrimSpace(jdResp.ErrorCode) != "" {
+		if strings.HasPrefix(strings.TrimSpace(jdResp.ErrorCode), "InputImageSensitiveContentDetected") {
+			return "", responseBody, service.TaskErrorWrapperLocal(
+				fmt.Errorf("The reference image did not pass the content safety check"),
+				"input_image_safety_check_failed",
+				http.StatusBadRequest,
+			)
+		}
+		msg := whiteLabelUpstreamMessage(jdResp.ErrorMessage)
+		if msg == "" {
+			msg = "video generation create failed"
+		}
+		return "", responseBody, service.TaskErrorWrapper(fmt.Errorf("%s", msg), "video_generation_create_failed", http.StatusBadGateway)
+	}
 	if !isSuccessfulEnvelope(jdResp.Code, jdResp.Msg) {
 		msg := whiteLabelUpstreamMessage(jdResp.Msg)
 		if msg == "" {
