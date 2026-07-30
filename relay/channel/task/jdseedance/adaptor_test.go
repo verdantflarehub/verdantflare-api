@@ -66,6 +66,57 @@ func TestNormalizeSubmitRequestFromMessages(t *testing.T) {
 	require.Equal(t, contentTypeText, createReq.Content[2].Type)
 }
 
+func TestNormalizeSubmitRequestPreservesThreeVideoReferences(t *testing.T) {
+	req := submitRequest{
+		Model: ModelJDSeedanceSD,
+		Messages: []dto.Message{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{"type": contentTypeText, "text": "依次参考视频1、视频2和视频3"},
+					map[string]any{"type": contentTypeVideoURL, "video_url": map[string]any{"url": "https://example.com/1.mp4"}},
+					map[string]any{"type": contentTypeVideoURL, "video_url": map[string]any{"url": "https://example.com/2.mp4"}},
+					map[string]any{"type": contentTypeVideoURL, "video_url": map[string]any{"url": "https://example.com/3.mp4"}},
+				},
+			},
+		},
+		Duration: 10,
+	}
+
+	taskReq, err := normalizeSubmitRequest(req)
+	require.NoError(t, err)
+	createReq, err := convertToCreateRequest(taskReq)
+	require.NoError(t, err)
+	require.Len(t, createReq.Content, 4)
+	require.Equal(t, contentTypeText, createReq.Content[0].Type)
+	for index := 1; index <= maxVideoReferences; index++ {
+		require.Equal(t, contentTypeVideoURL, createReq.Content[index].Type)
+		require.Equal(t, "https://example.com/"+string(rune('0'+index))+".mp4", createReq.Content[index].VideoURL.URL)
+	}
+}
+
+func TestNormalizeSubmitRequestRejectsFourthVideoReference(t *testing.T) {
+	content := []any{
+		map[string]any{"type": contentTypeText, "text": "参考视频生成"},
+	}
+	for index := 1; index <= maxVideoReferences+1; index++ {
+		content = append(content, map[string]any{
+			"type":      contentTypeVideoURL,
+			"video_url": map[string]any{"url": "https://example.com/reference.mp4"},
+		})
+	}
+	req := submitRequest{
+		Model:    ModelJDSeedanceSD,
+		Messages: []dto.Message{{Role: "user", Content: content}},
+		Duration: 10,
+	}
+
+	taskReq, err := normalizeSubmitRequest(req)
+	require.NoError(t, err)
+	_, err = convertToCreateRequest(taskReq)
+	require.EqualError(t, err, "at most 3 video references are supported")
+}
+
 func TestNormalizeSubmitRequestFromPromptAndMetadataContent(t *testing.T) {
 	req := submitRequest{
 		Model:  ModelJDSeedanceSD,

@@ -287,6 +287,7 @@ func contentItemFromMap(m map[string]any) (contentItem, bool, error) {
 
 func normalizeContentItems(items []contentItem) ([]contentItem, error) {
 	out := make([]contentItem, 0, len(items))
+	videoCount := 0
 	for _, item := range items {
 		item.Type = strings.TrimSpace(item.Type)
 		switch item.Type {
@@ -303,6 +304,10 @@ func normalizeContentItems(items []contentItem) ([]contentItem, error) {
 		case contentTypeVideoURL:
 			if item.VideoURL == nil || strings.TrimSpace(item.VideoURL.URL) == "" {
 				return nil, fmt.Errorf("video_url.url is required")
+			}
+			videoCount++
+			if videoCount > maxVideoReferences {
+				return nil, fmt.Errorf("at most %d video references are supported", maxVideoReferences)
 			}
 			item.VideoURL.URL = strings.TrimSpace(item.VideoURL.URL)
 		case contentTypeAudioURL:
