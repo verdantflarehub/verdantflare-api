@@ -16,6 +16,7 @@ type contentItem struct {
 	ImageURL *mediaURL `json:"image_url,omitempty"`
 	VideoURL *mediaURL `json:"video_url,omitempty"`
 	AudioURL *mediaURL `json:"audio_url,omitempty"`
+	Role     string    `json:"role,omitempty"`
 }
 
 type submitRequest struct {

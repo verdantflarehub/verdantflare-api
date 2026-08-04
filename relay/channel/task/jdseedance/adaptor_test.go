@@ -95,6 +95,89 @@ func TestNormalizeSubmitRequestPreservesThreeVideoReferences(t *testing.T) {
 	}
 }
 
+func TestNormalizeSubmitRequestAddsAndPreservesImageRoles(t *testing.T) {
+	req := submitRequest{
+		Model: ModelJDSeedanceSD,
+		Messages: []dto.Message{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{"type": contentTypeText, "text": "保持图片1和图片2中的人物与环境"},
+					map[string]any{"type": contentTypeImageURL, "image_url": map[string]any{"url": "https://example.com/character.png"}},
+					map[string]any{"type": contentTypeImageURL, "image_url": map[string]any{"url": "https://example.com/environment.png"}, "role": "first_frame"},
+					map[string]any{"type": contentTypeVideoURL, "video_url": map[string]any{"url": "https://example.com/control.mp4"}},
+				},
+			},
+		},
+		Duration: 15,
+	}
+
+	taskReq, err := normalizeSubmitRequest(req)
+	require.NoError(t, err)
+	createReq, err := convertToCreateRequest(taskReq)
+	require.NoError(t, err)
+	require.Len(t, createReq.Content, 4)
+	require.Equal(t, defaultImageRole, createReq.Content[1].Role)
+	require.Equal(t, "first_frame", createReq.Content[2].Role)
+	require.Empty(t, createReq.Content[3].Role)
+
+	body, err := common.Marshal(createReq)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"role":"reference_image"`)
+	require.Contains(t, string(body), `"role":"first_frame"`)
+}
+
+func TestNormalizeSubmitRequestAddsImageRoleForLegacyInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		req  submitRequest
+	}{
+		{
+			name: "top-level image fields",
+			req: submitRequest{
+				Model:    ModelJDSeedanceSD,
+				Prompt:   "保持两张参考图片中的角色与环境",
+				Image:    "https://example.com/character.png",
+				Images:   []string{"https://example.com/environment.png"},
+				Duration: 15,
+			},
+		},
+		{
+			name: "metadata content",
+			req: submitRequest{
+				Model:  ModelJDSeedanceSD,
+				Prompt: "保持参考图片",
+				Metadata: map[string]any{
+					"content": []any{
+						map[string]any{"type": contentTypeText, "text": "保持参考图片"},
+						map[string]any{"type": contentTypeImageURL, "image_url": map[string]any{"url": "https://example.com/reference.png"}},
+					},
+					"duration": 15,
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			taskReq, err := normalizeSubmitRequest(test.req)
+			require.NoError(t, err)
+			createReq, err := convertToCreateRequest(taskReq)
+			require.NoError(t, err)
+
+			imageCount := 0
+			for _, item := range createReq.Content {
+				if item.Type != contentTypeImageURL {
+					continue
+				}
+				imageCount++
+				require.Equal(t, defaultImageRole, item.Role)
+			}
+			require.NotZero(t, imageCount)
+		})
+	}
+}
+
 func TestNormalizeSubmitRequestRejectsFourthVideoReference(t *testing.T) {
 	content := []any{
 		map[string]any{"type": contentTypeText, "text": "参考视频生成"},

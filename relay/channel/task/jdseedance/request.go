@@ -38,6 +38,7 @@ func normalizeSubmitRequest(req submitRequest) (relaycommon.TaskSubmitReq, error
 		content = append(content, contentItem{
 			Type:     contentTypeImageURL,
 			ImageURL: &mediaURL{URL: image},
+			Role:     defaultImageRole,
 		})
 	}
 
@@ -258,7 +259,11 @@ func contentItemFromMap(m map[string]any) (contentItem, bool, error) {
 		if url == "" {
 			return contentItem{}, false, fmt.Errorf("image_url.url is required")
 		}
-		return contentItem{Type: contentTypeImageURL, ImageURL: &mediaURL{URL: url}}, true, nil
+		return contentItem{
+			Type:     contentTypeImageURL,
+			ImageURL: &mediaURL{URL: url},
+			Role:     strings.TrimSpace(common.Interface2String(m["role"])),
+		}, true, nil
 	case contentTypeVideoURL:
 		url := extractMediaURL(m[contentTypeVideoURL])
 		if url == "" {
@@ -279,7 +284,11 @@ func contentItemFromMap(m map[string]any) (contentItem, bool, error) {
 			return contentItem{Type: contentTypeAudioURL, AudioURL: &mediaURL{URL: url}}, true, nil
 		}
 		if url := extractMediaURL(m["image_url"]); url != "" {
-			return contentItem{Type: contentTypeImageURL, ImageURL: &mediaURL{URL: url}}, true, nil
+			return contentItem{
+				Type:     contentTypeImageURL,
+				ImageURL: &mediaURL{URL: url},
+				Role:     strings.TrimSpace(common.Interface2String(m["role"])),
+			}, true, nil
 		}
 		return contentItem{}, false, fmt.Errorf("unsupported content type: %s", contentType)
 	}
@@ -301,6 +310,10 @@ func normalizeContentItems(items []contentItem) ([]contentItem, error) {
 				return nil, fmt.Errorf("image_url.url is required")
 			}
 			item.ImageURL.URL = strings.TrimSpace(item.ImageURL.URL)
+			item.Role = strings.TrimSpace(item.Role)
+			if item.Role == "" {
+				item.Role = defaultImageRole
+			}
 		case contentTypeVideoURL:
 			if item.VideoURL == nil || strings.TrimSpace(item.VideoURL.URL) == "" {
 				return nil, fmt.Errorf("video_url.url is required")
