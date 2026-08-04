@@ -25,6 +25,8 @@ type submitRequest struct {
 	Messages      []dto.Message  `json:"messages,omitempty"`
 	Image         string         `json:"image,omitempty"`
 	Images        []string       `json:"images,omitempty"`
+	Video         string         `json:"video,omitempty"`
+	Videos        []string       `json:"videos,omitempty"`
 	Duration      int            `json:"duration,omitempty"`
 	Seconds       string         `json:"seconds,omitempty"`
 	Ratio         string         `json:"ratio,omitempty"`

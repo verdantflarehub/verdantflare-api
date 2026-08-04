@@ -61,6 +61,7 @@ func TestNormalizeSubmitRequestFromMessages(t *testing.T) {
 	require.Len(t, createReq.Content, 3)
 	require.Equal(t, contentTypeVideoURL, createReq.Content[0].Type)
 	require.Equal(t, "https://example.com/input.mp4", createReq.Content[0].VideoURL.URL)
+	require.Equal(t, defaultVideoRole, createReq.Content[0].Role)
 	require.Equal(t, contentTypeAudioURL, createReq.Content[1].Type)
 	require.Equal(t, "https://example.com/input.mp3", createReq.Content[1].AudioURL.URL)
 	require.Equal(t, contentTypeText, createReq.Content[2].Type)
@@ -92,10 +93,11 @@ func TestNormalizeSubmitRequestPreservesThreeVideoReferences(t *testing.T) {
 	for index := 1; index <= maxVideoReferences; index++ {
 		require.Equal(t, contentTypeVideoURL, createReq.Content[index].Type)
 		require.Equal(t, "https://example.com/"+string(rune('0'+index))+".mp4", createReq.Content[index].VideoURL.URL)
+		require.Equal(t, defaultVideoRole, createReq.Content[index].Role)
 	}
 }
 
-func TestNormalizeSubmitRequestAddsAndPreservesImageRoles(t *testing.T) {
+func TestNormalizeSubmitRequestAddsAndPreservesMediaRoles(t *testing.T) {
 	req := submitRequest{
 		Model: ModelJDSeedanceSD,
 		Messages: []dto.Message{
@@ -119,42 +121,50 @@ func TestNormalizeSubmitRequestAddsAndPreservesImageRoles(t *testing.T) {
 	require.Len(t, createReq.Content, 4)
 	require.Equal(t, defaultImageRole, createReq.Content[1].Role)
 	require.Equal(t, "first_frame", createReq.Content[2].Role)
-	require.Empty(t, createReq.Content[3].Role)
+	require.Equal(t, defaultVideoRole, createReq.Content[3].Role)
 
 	body, err := common.Marshal(createReq)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"role":"reference_image"`)
 	require.Contains(t, string(body), `"role":"first_frame"`)
+	require.Contains(t, string(body), `"role":"reference_video"`)
 }
 
-func TestNormalizeSubmitRequestAddsImageRoleForLegacyInputs(t *testing.T) {
+func TestNormalizeSubmitRequestAddsMediaRolesForLegacyInputs(t *testing.T) {
 	tests := []struct {
-		name string
-		req  submitRequest
+		name               string
+		req                submitRequest
+		expectedVideoCount int
 	}{
 		{
-			name: "top-level image fields",
+			name: "top-level image and video fields",
 			req: submitRequest{
 				Model:    ModelJDSeedanceSD,
-				Prompt:   "保持两张参考图片中的角色与环境",
+				Prompt:   "保持两张参考图片中的角色与环境，并遵循参考视频运动",
 				Image:    "https://example.com/character.png",
 				Images:   []string{"https://example.com/environment.png"},
+				Video:    "https://example.com/control-1.mp4",
+				Videos:   []string{"https://example.com/control-2.mp4"},
 				Duration: 15,
 			},
+			expectedVideoCount: 2,
 		},
 		{
-			name: "metadata content",
+			name: "metadata image and video content",
 			req: submitRequest{
 				Model:  ModelJDSeedanceSD,
-				Prompt: "保持参考图片",
+				Prompt: "保持参考图片并遵循参考视频运动",
 				Metadata: map[string]any{
 					"content": []any{
-						map[string]any{"type": contentTypeText, "text": "保持参考图片"},
+						map[string]any{"type": contentTypeText, "text": "保持参考图片并遵循参考视频运动"},
 						map[string]any{"type": contentTypeImageURL, "image_url": map[string]any{"url": "https://example.com/reference.png"}},
+						map[string]any{"type": contentTypeVideoURL, "video_url": map[string]any{"url": "https://example.com/reference-typed.mp4"}},
+						map[string]any{"video_url": map[string]any{"url": "https://example.com/reference-fallback.mp4"}},
 					},
 					"duration": 15,
 				},
 			},
+			expectedVideoCount: 2,
 		},
 	}
 
@@ -166,16 +176,46 @@ func TestNormalizeSubmitRequestAddsImageRoleForLegacyInputs(t *testing.T) {
 			require.NoError(t, err)
 
 			imageCount := 0
+			videoCount := 0
 			for _, item := range createReq.Content {
-				if item.Type != contentTypeImageURL {
-					continue
+				switch item.Type {
+				case contentTypeImageURL:
+					imageCount++
+					require.Equal(t, defaultImageRole, item.Role)
+				case contentTypeVideoURL:
+					videoCount++
+					require.Equal(t, defaultVideoRole, item.Role)
 				}
-				imageCount++
-				require.Equal(t, defaultImageRole, item.Role)
 			}
 			require.NotZero(t, imageCount)
+			require.Equal(t, test.expectedVideoCount, videoCount)
 		})
 	}
+}
+
+func TestNormalizeSubmitRequestRejectsUnsupportedVideoRole(t *testing.T) {
+	req := submitRequest{
+		Model: ModelJDSeedanceSD,
+		Messages: []dto.Message{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{"type": contentTypeText, "text": "参考视频生成"},
+					map[string]any{
+						"type":      contentTypeVideoURL,
+						"video_url": map[string]any{"url": "https://example.com/reference.mp4"},
+						"role":      "first_frame",
+					},
+				},
+			},
+		},
+		Duration: 10,
+	}
+
+	taskReq, err := normalizeSubmitRequest(req)
+	require.NoError(t, err)
+	_, err = convertToCreateRequest(taskReq)
+	require.EqualError(t, err, "video_url.role must be reference_video")
 }
 
 func TestNormalizeSubmitRequestRejectsFourthVideoReference(t *testing.T) {

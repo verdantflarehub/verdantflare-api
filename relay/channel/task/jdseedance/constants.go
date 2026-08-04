@@ -13,6 +13,7 @@ const (
 	contentTypeVideoURL = "video_url"
 	contentTypeAudioURL = "audio_url"
 	defaultImageRole    = "reference_image"
+	defaultVideoRole    = "reference_video"
 	maxVideoReferences  = 3
 	defaultRatio        = "16:9"
 )

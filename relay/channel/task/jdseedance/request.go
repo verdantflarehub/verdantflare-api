@@ -41,6 +41,17 @@ func normalizeSubmitRequest(req submitRequest) (relaycommon.TaskSubmitReq, error
 			Role:     defaultImageRole,
 		})
 	}
+	for _, video := range append(singleton(req.Video), req.Videos...) {
+		video = strings.TrimSpace(video)
+		if video == "" {
+			continue
+		}
+		content = append(content, contentItem{
+			Type:     contentTypeVideoURL,
+			VideoURL: &mediaURL{URL: video},
+			Role:     defaultVideoRole,
+		})
+	}
 
 	messageContent, messageText, err := contentItemsFromMessages(req.Messages)
 	if err != nil {
@@ -269,7 +280,11 @@ func contentItemFromMap(m map[string]any) (contentItem, bool, error) {
 		if url == "" {
 			return contentItem{}, false, fmt.Errorf("video_url.url is required")
 		}
-		return contentItem{Type: contentTypeVideoURL, VideoURL: &mediaURL{URL: url}}, true, nil
+		return contentItem{
+			Type:     contentTypeVideoURL,
+			VideoURL: &mediaURL{URL: url},
+			Role:     strings.TrimSpace(common.Interface2String(m["role"])),
+		}, true, nil
 	case contentTypeAudioURL:
 		url := extractMediaURL(m[contentTypeAudioURL])
 		if url == "" {
@@ -278,7 +293,11 @@ func contentItemFromMap(m map[string]any) (contentItem, bool, error) {
 		return contentItem{Type: contentTypeAudioURL, AudioURL: &mediaURL{URL: url}}, true, nil
 	default:
 		if url := extractMediaURL(m["video_url"]); url != "" {
-			return contentItem{Type: contentTypeVideoURL, VideoURL: &mediaURL{URL: url}}, true, nil
+			return contentItem{
+				Type:     contentTypeVideoURL,
+				VideoURL: &mediaURL{URL: url},
+				Role:     strings.TrimSpace(common.Interface2String(m["role"])),
+			}, true, nil
 		}
 		if url := extractMediaURL(m["audio_url"]); url != "" {
 			return contentItem{Type: contentTypeAudioURL, AudioURL: &mediaURL{URL: url}}, true, nil
@@ -323,6 +342,13 @@ func normalizeContentItems(items []contentItem) ([]contentItem, error) {
 				return nil, fmt.Errorf("at most %d video references are supported", maxVideoReferences)
 			}
 			item.VideoURL.URL = strings.TrimSpace(item.VideoURL.URL)
+			item.Role = strings.TrimSpace(item.Role)
+			if item.Role == "" {
+				item.Role = defaultVideoRole
+			}
+			if item.Role != defaultVideoRole {
+				return nil, fmt.Errorf("video_url.role must be %s", defaultVideoRole)
+			}
 		case contentTypeAudioURL:
 			if item.AudioURL == nil || strings.TrimSpace(item.AudioURL.URL) == "" {
 				return nil, fmt.Errorf("audio_url.url is required")
