@@ -234,10 +234,28 @@ func TokenOrUserAuth() func(c *gin.Context) {
 	}
 }
 
-// TokenAuthReadOnly 宽松版本的令牌认证中间件，用于只读查询接口。
-// 只验证令牌 key 是否存在，不检查令牌状态、过期时间和额度。
-// 即使令牌已过期、已耗尽或已禁用，也允许访问。
-// 仍然检查用户是否被封禁。
+// TokenOrUserAuthReadOnly permits an exhausted or expired API token to read
+// owner-scoped asynchronous results that may already have been paid for. It
+// still rejects an explicitly disabled token, a banned user, and IP-policy
+// violations. Session users keep the normal enabled-user requirement.
+func TokenOrUserAuthReadOnly() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		session := sessions.Default(c)
+		if id := session.Get("id"); id != nil {
+			if status, ok := session.Get("status").(int); ok && status == common.UserStatusEnabled {
+				c.Set("id", id)
+				c.Next()
+				return
+			}
+		}
+		TokenAuthReadOnly()(c)
+	}
+}
+
+// TokenAuthReadOnly is the token middleware for owner-scoped read endpoints.
+// It permits exhausted or expired tokens so a paid asynchronous result remains
+// recoverable, while still enforcing explicit disablement, token IP policy and
+// the owning user's enabled status.
 func TokenAuthReadOnly() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		key := c.Request.Header.Get("Authorization")
@@ -285,6 +303,16 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			return
 		}
 
+		allowIps := token.GetIpLimits()
+		if len(allowIps) > 0 {
+			clientIp := c.ClientIP()
+			ip := net.ParseIP(clientIp)
+			if ip == nil || !common.IsIpInCIDRList(ip, allowIps) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "您的 IP 不在令牌允许访问的列表中", types.ErrorCodeAccessDenied)
+				return
+			}
+		}
+
 		userCache, err := model.GetUserCache(token.UserId)
 		if err != nil {
 			common.SysLog(fmt.Sprintf("TokenAuthReadOnly GetUserCache error for user %d: %v", token.UserId, err))
@@ -304,9 +332,10 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			return
 		}
 
-		c.Set("id", token.UserId)
-		c.Set("token_id", token.Id)
-		c.Set("token_key", token.Key)
+		userCache.WriteContext(c)
+		if err := SetupContextForToken(c, token); err != nil {
+			return
+		}
 		c.Next()
 	}
 }

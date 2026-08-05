@@ -498,6 +498,17 @@ func RelayTask(c *gin.Context) {
 		respondTaskError(c, taskErr)
 		return
 	}
+	// SD2 remix is outside the approved public product contract. Keep this
+	// rejection independent of the submission-ledger rollout flag so disabling
+	// the new path can never fall through to the legacy sender.
+	if relayInfo.OriginModelName == service.SD2OriginModel && isSD2RemixRequest(c.Request.URL.Path, relayInfo.Action) {
+		respondTaskError(c, service.TaskErrorWrapperLocal(errors.New("SD2 remix is not enabled"), "unsupported_action", http.StatusBadRequest))
+		return
+	}
+	if relayInfo.OriginModelName == service.SD2OriginModel && service.SD2SubmissionLedgerEnabled() {
+		relaySD2Task(c, relayInfo)
+		return
+	}
 
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
@@ -597,6 +608,45 @@ func RelayTask(c *gin.Context) {
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
+			// Release N keeps the legacy JD path while the ledger is dark. A
+			// provider task already exists and billing is already settled here,
+			// so an ambiguous/local insert failure must never look like an empty
+			// retryable response. First recover an insert whose commit response
+			// was lost; otherwise return an explicit do-not-retry UNKNOWN without
+			// refunding or exposing the upstream task ID.
+			if relayInfo.OriginModelName == service.SD2OriginModel {
+				persisted, exists, lookupErr := model.GetByTaskId(relayInfo.UserId, task.TaskID)
+				if lookupErr == nil && exists && persisted != nil {
+					task = persisted
+					if !c.Writer.Written() && (c.Request.URL.Path == "/v1/videos" || c.Request.URL.Path == "/v1/video/generations") {
+						video := dto.NewOpenAIVideo()
+						video.ID = task.TaskID
+						video.TaskID = task.TaskID
+						video.CreatedAt = task.CreatedAt
+						video.Model = relayInfo.OriginModelName
+						c.JSON(http.StatusOK, video)
+					}
+				} else if !c.Writer.Written() {
+					clientRequestID := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+					if clientRequestID == "" {
+						clientRequestID = strings.TrimSpace(c.GetHeader("X-Request-ID"))
+					}
+					c.JSON(http.StatusConflict, &dto.TaskError{
+						Code:       "video_submission_unknown",
+						Message:    "the provider task may exist but local confirmation failed; do not retry this creation",
+						StatusCode: http.StatusConflict,
+						LocalError: true,
+						Data:       map[string]any{"client_request_id": clientRequestID, "task_id": task.TaskID},
+					})
+				}
+			}
+		} else if !c.Writer.Written() && (c.Request.URL.Path == "/v1/videos" || c.Request.URL.Path == "/v1/video/generations") {
+			video := dto.NewOpenAIVideo()
+			video.ID = task.TaskID
+			video.TaskID = task.TaskID
+			video.CreatedAt = task.CreatedAt
+			video.Model = relayInfo.OriginModelName
+			c.JSON(http.StatusOK, video)
 		}
 	}
 

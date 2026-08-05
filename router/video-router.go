@@ -11,24 +11,33 @@ func SetVideoRouter(router *gin.Engine) {
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
-	videoProxyRouter.Use(middleware.TokenOrUserAuth())
+	videoProxyRouter.Use(middleware.TokenOrUserAuthReadOnly())
 	{
 		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
 	}
 
-	videoV1Router := router.Group("/v1")
-	videoV1Router.Use(middleware.RouteTag("relay"))
-	videoV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
+	videoSubmissionRouter := router.Group("/v1")
+	videoSubmissionRouter.Use(middleware.RouteTag("relay"))
+	videoSubmissionRouter.Use(middleware.TokenAuthReadOnly())
 	{
-		videoV1Router.POST("/video/generations", controller.RelayTask)
-		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
-		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
+		videoSubmissionRouter.GET("/video-submissions/:client_request_id", controller.GetVideoSubmission)
 	}
-	// openai compatible API video routes
-	// docs: https://platform.openai.com/docs/api-reference/videos/create
+
+	videoCreateRouter := router.Group("/v1")
+	videoCreateRouter.Use(middleware.RouteTag("relay"))
+	videoCreateRouter.Use(middleware.TokenAuth(), middleware.SD2SubmissionIdempotency(), middleware.Distribute())
 	{
-		videoV1Router.POST("/videos", controller.RelayTask)
-		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
+		videoCreateRouter.POST("/video/generations", controller.RelayTask)
+		videoCreateRouter.POST("/videos/:video_id/remix", controller.RelayTask)
+		videoCreateRouter.POST("/videos", controller.RelayTask)
+	}
+
+	videoReadRouter := router.Group("/v1")
+	videoReadRouter.Use(middleware.RouteTag("relay"))
+	videoReadRouter.Use(middleware.TokenAuthReadOnly(), middleware.Distribute())
+	{
+		videoReadRouter.GET("/video/generations/:task_id", controller.RelayTaskFetch)
+		videoReadRouter.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
 
 	klingV1Router := router.Group("/kling/v1")

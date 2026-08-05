@@ -7,12 +7,17 @@ import (
 )
 
 type ChannelSettings struct {
-	ForceFormat            bool   `json:"force_format,omitempty"`
-	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
-	Proxy                  string `json:"proxy"`
-	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
-	SystemPrompt           string `json:"system_prompt,omitempty"`
-	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	ForceFormat                  bool   `json:"force_format,omitempty"`
+	ThinkingToContent            bool   `json:"thinking_to_content,omitempty"`
+	Proxy                        string `json:"proxy"`
+	PassThroughBodyEnabled       bool   `json:"pass_through_body_enabled,omitempty"`
+	SystemPrompt                 string `json:"system_prompt,omitempty"`
+	SystemPromptOverride         bool   `json:"system_prompt_override,omitempty"`
+	CreateEnabled                *bool  `json:"create_enabled,omitempty"`
+	PollEnabled                  *bool  `json:"poll_enabled,omitempty"`
+	MaxConcurrency               int    `json:"max_concurrency,omitempty"`
+	MaxTaskCostMicrounitsCNY     int64  `json:"max_task_cost_microunits_cny,omitempty"`
+	HardDailyBudgetMicrounitsCNY int64  `json:"hard_daily_budget_microunits_cny,omitempty"`
 }
 
 type VertexKeyType string

@@ -529,7 +529,13 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	ctx := context.Background()
+	method := http.MethodPost
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+		method = c.Request.Method
+	}
+	req, err := http.NewRequestWithContext(ctx, method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}

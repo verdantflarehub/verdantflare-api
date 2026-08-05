@@ -76,6 +76,15 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if channel.Type == constant.ChannelTypeWxmaasSeedance {
+		channelCopy := *channel
+		if strings.TrimSpace(channelCopy.Key) == "" {
+			return testResult{localErr: fmt.Errorf("wxmaas Seedance channel configuration is invalid: channel key is required")}
+		}
+		if err := normalizeAndValidateWxmaasChannel(&channelCopy); err != nil {
+			return testResult{localErr: fmt.Errorf("wxmaas Seedance channel configuration is invalid: %w", err)}
+		}
+	}
 	tik := time.Now()
 	var unsupportedTestChannelTypes = []int{
 		constant.ChannelTypeMidjourney,
@@ -85,6 +94,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		constant.ChannelTypeJimeng,
 		constant.ChannelTypeDoubaoVideo,
 		constant.ChannelTypeJDSeedance,
+		constant.ChannelTypeWxmaasSeedance,
 		constant.ChannelTypeVidu,
 	}
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {

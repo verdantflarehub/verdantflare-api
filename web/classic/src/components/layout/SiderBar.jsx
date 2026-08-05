@@ -45,6 +45,7 @@ const routerMap = {
   detail: '/console',
   pricing: '/pricing',
   task: '/console/task',
+  taskSubmissions: '/console/task-submissions',
   models: '/console/models',
   deployment: '/console/deployment',
   playground: '/console/playground',
@@ -151,6 +152,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('渠道管理'),
         itemKey: 'channel',
         to: '/channel',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('API Center · 视频提交'),
+        itemKey: 'taskSubmissions',
+        to: '/task-submissions',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

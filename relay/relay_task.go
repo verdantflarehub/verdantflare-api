@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +28,25 @@ type TaskSubmitResult struct {
 	TaskData       []byte
 	Platform       constant.TaskPlatform
 	Quota          int
+	// ProviderHTTPStatus and ResponseDigest are private submission evidence.
+	// They are used by the SD2 side-effect fence and are never exposed as an
+	// upstream response body or signed URL.
+	ProviderHTTPStatus int
+	ResponseDigest     string
 	//PerCallPrice   types.PriceData
+}
+
+const maxSD2ProviderCreateResponseBytes = 1 << 20
+
+// PreparedTaskSubmit contains only locally derived facts. Creating it performs
+// validation, model mapping, pricing and request encoding, but no balance or
+// provider side effect. SD2 uses this boundary before T1/T2; the legacy wrapper
+// below preserves all other TaskAdaptor behavior.
+type PreparedTaskSubmit struct {
+	Adaptor     channel.TaskAdaptor
+	RequestBody []byte
+	Platform    constant.TaskPlatform
+	Quota       int
 }
 
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
@@ -137,12 +156,7 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 	return nil
 }
 
-// RelayTaskSubmit 完成 task 提交的全部流程（每次尝试调用一次）：
-// 刷新渠道元数据 → 确定 platform/adaptor → 验证请求 →
-// 估算计费(EstimateBilling) → 计算价格 → 预扣费（仅首次）→
-// 构建/发送/解析上游请求 → 提交后计费调整(AdjustBillingOnSubmit)。
-// 控制器负责 defer Refund 和成功后 Settle。
-func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
+func PrepareTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*PreparedTaskSubmit, *dto.TaskError) {
 	info.InitChannelMeta(c)
 
 	// 1. 确定 platform → 创建适配器 → 验证请求
@@ -202,31 +216,60 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		noteTaskQuotaClamp(info, clamp)
 	}
 
-	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
-	if info.Billing == nil && !info.PriceData.FreeModel {
-		info.ForcePreConsume = true
-		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
-			return nil, service.TaskErrorFromAPIError(apiErr)
-		}
-	}
-
-	// 8. 构建请求体
+	// 7. 构建请求体。该步骤仍在 side-effect fence 之前；失败时既不
+	// 预扣，也不把 Submission 标成 SENDING。
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 	}
-
-	// 9. 发送请求
-	resp, err := adaptor.DoRequest(c, info, requestBody)
+	requestBytes, err := io.ReadAll(requestBody)
 	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
-	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
-		responseBody, _ := io.ReadAll(resp.Body)
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		return nil, service.TaskErrorWrapper(err, "read_request_failed", http.StatusInternalServerError)
 	}
 
-	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
+	return &PreparedTaskSubmit{
+		Adaptor:     adaptor,
+		RequestBody: requestBytes,
+		Platform:    platform,
+		Quota:       info.PriceData.Quota,
+	}, nil
+}
+
+// SendPreparedTask performs exactly one provider request. The caller decides
+// whether it owns send permission; this function contains no retry loop and no
+// billing mutation.
+func SendPreparedTask(c *gin.Context, info *relaycommon.RelayInfo, prepared *PreparedTaskSubmit) (*TaskSubmitResult, *dto.TaskError) {
+	if prepared == nil || prepared.Adaptor == nil {
+		return nil, service.TaskErrorWrapperLocal(errors.New("task submission was not prepared"), "invalid_submission_state", http.StatusInternalServerError)
+	}
+	result := &TaskSubmitResult{
+		Platform: prepared.Platform,
+		Quota:    prepared.Quota,
+	}
+
+	resp, err := prepared.Adaptor.DoRequest(c, info, bytes.NewReader(prepared.RequestBody))
+	if err != nil {
+		return result, service.TaskErrorWrapper(err, "do_request_failed", http.StatusBadGateway)
+	}
+	if resp == nil {
+		return result, service.TaskErrorWrapper(errors.New("provider returned an empty response"), "empty_provider_response", http.StatusBadGateway)
+	}
+	result.ProviderHTTPStatus = resp.StatusCode
+	capturedSD2Evidence, captureErr := captureSD2ProviderResponseEvidence(info, resp, result)
+	if captureErr != nil {
+		return result, service.TaskErrorWrapper(captureErr, "provider_response_invalid", http.StatusBadGateway)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+		_ = resp.Body.Close()
+		result.TaskData = responseBody
+		if !capturedSD2Evidence {
+			result.ResponseDigest = taskResponseDigest(responseBody)
+		}
+		return result, service.TaskErrorWrapper(fmt.Errorf("provider returned HTTP %d", resp.StatusCode), "fail_to_fetch_task", resp.StatusCode)
+	}
+
+	// Return OtherRatios before an adaptor that still writes a legacy response.
 	otherRatios := info.PriceData.OtherRatios()
 	if otherRatios == nil {
 		otherRatios = map[string]float64{}
@@ -234,15 +277,20 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	ratiosJSON, _ := common.Marshal(otherRatios)
 	c.Header("X-New-Api-Other-Ratios", string(ratiosJSON))
 
-	// 11. 解析响应
-	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
+	upstreamTaskID, taskData, taskErr := prepared.Adaptor.DoResponse(c, resp, info)
+	result.TaskData = taskData
+	if !capturedSD2Evidence {
+		result.ResponseDigest = taskResponseDigest(taskData)
+	}
 	if taskErr != nil {
-		return nil, taskErr
+		return result, taskErr
 	}
 
-	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
+	// Legacy adaptors may adjust their public price after parsing. SD2 adaptors
+	// deliberately return nil so provider usage cannot alter the fixed product
+	// price frozen at T1.
 	finalQuota := info.PriceData.Quota
-	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
+	if adjustedRatios := prepared.Adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
 		if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
 			// 基于调整后的 ratios 重新计算 quota
 			finalQuota = adjustedQuota
@@ -251,12 +299,57 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	return &TaskSubmitResult{
-		UpstreamTaskID: upstreamTaskID,
-		TaskData:       taskData,
-		Platform:       platform,
-		Quota:          finalQuota,
-	}, nil
+	result.UpstreamTaskID = upstreamTaskID
+	result.Quota = finalQuota
+	return result, nil
+}
+
+// captureSD2ProviderResponseEvidence hashes the bounded raw create response
+// before a provider adaptor parses or discards it. Only the digest survives;
+// the raw body is restored in memory for the adaptor and is never persisted.
+func captureSD2ProviderResponseEvidence(info *relaycommon.RelayInfo, resp *http.Response, result *TaskSubmitResult) (bool, error) {
+	if info == nil || info.OriginModelName != service.SD2OriginModel || !service.SD2SubmissionLedgerEnabled() {
+		return false, nil
+	}
+	if resp == nil || resp.Body == nil || result == nil {
+		return true, errors.New("provider returned an empty response")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSD2ProviderCreateResponseBytes+1))
+	_ = resp.Body.Close()
+	if err != nil {
+		return true, errors.New("provider response could not be read")
+	}
+	result.ResponseDigest = taskResponseDigest(body)
+	if len(body) > maxSD2ProviderCreateResponseBytes {
+		return true, errors.New("provider response is too large")
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return true, nil
+}
+
+// RelayTaskSubmit is the compatibility wrapper for non-ledger task models.
+// It keeps their existing BillingSession lifecycle while sharing the safer
+// prepare/send split with the SD2 controller.
+func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
+	prepared, taskErr := PrepareTaskSubmit(c, info)
+	if taskErr != nil {
+		return nil, taskErr
+	}
+	if info.Billing == nil && !info.PriceData.FreeModel {
+		info.ForcePreConsume = true
+		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
+			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
+	}
+	return SendPreparedTask(c, info, prepared)
+}
+
+func taskResponseDigest(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("%x", sum[:])
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
@@ -385,6 +478,23 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 
+	// Ledger-managed SD2 tasks use one provider-independent public converter on
+	// both query aliases. Provider adaptors may understand legacy raw task data,
+	// but must never expose provider usage, statuses, or archive references from
+	// the strict SD2 snapshot.
+	submission, err := model.GetTaskSubmissionByTaskDBID(originTask.ID)
+	if err != nil {
+		taskResp = service.TaskErrorWrapper(err, "get_task_submission_failed", http.StatusInternalServerError)
+		return
+	}
+	if submission != nil {
+		respBody, err = convertLedgerSD2ToOpenAIVideo(originTask, submission)
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
+		}
+		return
+	}
+
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
@@ -422,6 +532,72 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
 	}
 	return
+}
+
+func convertLedgerSD2ToOpenAIVideo(task *model.Task, submission *model.TaskSubmission) ([]byte, error) {
+	if task == nil || submission == nil || submission.TaskDBID == nil || *submission.TaskDBID != task.ID ||
+		submission.PublicTaskID != task.TaskID || submission.UserID != task.UserId ||
+		submission.OriginModelName != service.SD2OriginModel {
+		return nil, fmt.Errorf("invalid ledger-managed SD2 task binding")
+	}
+	snapshot, err := service.DecodeSD2TaskResultSnapshot(task.Data)
+	if err != nil {
+		return nil, fmt.Errorf("decode ledger-managed SD2 result: %w", err)
+	}
+
+	video := dto.NewOpenAIVideo()
+	video.ID = task.TaskID
+	video.TaskID = task.TaskID
+	video.Status = task.Status.ToVideoStatus()
+	if video.Status == dto.VideoStatusUnknown {
+		video.Status = dto.VideoStatusQueued
+	}
+	video.SetProgressStr(task.Progress)
+	video.CreatedAt = task.CreatedAt
+	if task.FinishTime > 0 {
+		video.CompletedAt = task.FinishTime
+	}
+	video.Model = service.SD2OriginModel
+
+	if snapshot.Duration > 0 {
+		video.SetMetadata("duration", snapshot.Duration)
+	}
+	if snapshot.Ratio != "" {
+		video.SetMetadata("ratio", snapshot.Ratio)
+	}
+	if snapshot.Resolution != "" {
+		video.SetMetadata("resolution", strings.ToLower(snapshot.Resolution))
+	}
+	if snapshot.FramesPerSecond > 0 {
+		video.SetMetadata("framespersecond", snapshot.FramesPerSecond)
+	}
+	if snapshot.GenerateAudio != nil {
+		video.SetMetadata("generate_audio", *snapshot.GenerateAudio)
+	}
+	if snapshot.Seed != nil {
+		video.SetMetadata("seed", *snapshot.Seed)
+	}
+
+	switch task.Status {
+	case model.TaskStatusSuccess:
+		frozenDescriptor, descriptorErr := service.SD2ArchivedResultFromSubmission(submission)
+		if submission.State != model.TaskSubmissionStateConfirmed ||
+			submission.BillingState != model.TaskSubmissionBillingStateSettled ||
+			descriptorErr != nil ||
+			snapshot.ArchiveState != service.SD2ArchiveStateArchived ||
+			snapshot.ArchivedResult == nil || *snapshot.ArchivedResult != frozenDescriptor {
+			return nil, fmt.Errorf("ledger-managed SD2 result is not delivery-complete")
+		}
+		video.SetMetadata("url", taskcommon.BuildProxyURL(task.TaskID))
+	case model.TaskStatusFailure:
+		code := submission.SafeErrorCode
+		if code == "" {
+			code = "video_generation_failed"
+		}
+		video.Error = &dto.OpenAIVideoError{Code: code, Message: "video generation failed"}
+	}
+
+	return common.MarshalNoHTMLEscape(video)
 }
 
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。

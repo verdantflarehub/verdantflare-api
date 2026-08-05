@@ -191,6 +191,11 @@ export const channelFormSchema = z
     pass_through_body_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
+    create_enabled: z.boolean(),
+    poll_enabled: z.boolean(),
+    max_concurrency: z.number().int(),
+    max_task_cost_microunits_cny: z.number().int(),
+    hard_daily_budget_microunits_cny: z.number().int(),
     // Type-specific settings (stored in settings JSON)
     is_enterprise_account: z.boolean().optional(), // OpenRouter specific
     vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
@@ -211,6 +216,34 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.type === 60) {
+      if (data.max_concurrency !== 1) {
+        addRequiredIssue(ctx, 'max_concurrency', 'Max concurrency must equal 1')
+      }
+      if (
+        !Number.isSafeInteger(data.max_task_cost_microunits_cny) ||
+        data.max_task_cost_microunits_cny <= 0
+      ) {
+        addRequiredIssue(
+          ctx,
+          'max_task_cost_microunits_cny',
+          'Single-task cost limit must be positive'
+        )
+      }
+      if (
+        !Number.isSafeInteger(data.hard_daily_budget_microunits_cny) ||
+        data.hard_daily_budget_microunits_cny <= 0 ||
+        data.hard_daily_budget_microunits_cny <
+          data.max_task_cost_microunits_cny
+      ) {
+        addRequiredIssue(
+          ctx,
+          'hard_daily_budget_microunits_cny',
+          'Daily budget must be positive and at least the single-task cost limit'
+        )
+      }
+    }
+
     if ([3, 8, 36, 45].includes(data.type) && !data.base_url?.trim()) {
       addRequiredIssue(
         ctx,
@@ -331,6 +364,11 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   pass_through_body_enabled: false,
   system_prompt: '',
   system_prompt_override: false,
+  create_enabled: false,
+  poll_enabled: true,
+  max_concurrency: 1,
+  max_task_cost_microunits_cny: 0,
+  hard_daily_budget_microunits_cny: 0,
   // Type-specific settings
   is_enterprise_account: false,
   vertex_key_type: 'json',
@@ -369,6 +407,11 @@ export function transformChannelToFormDefaults(
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
+    create_enabled: false,
+    poll_enabled: true,
+    max_concurrency: 1,
+    max_task_cost_microunits_cny: 0,
+    hard_daily_budget_microunits_cny: 0,
   }
 
   if (channel.setting) {
@@ -381,6 +424,13 @@ export function transformChannelToFormDefaults(
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
+        create_enabled: parsed.create_enabled === true,
+        poll_enabled: parsed.poll_enabled !== false,
+        max_concurrency: Number(parsed.max_concurrency) || 0,
+        max_task_cost_microunits_cny:
+          Number(parsed.max_task_cost_microunits_cny) || 0,
+        hard_daily_budget_microunits_cny:
+          Number(parsed.hard_daily_budget_microunits_cny) || 0,
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -491,13 +541,22 @@ export function transformChannelToFormDefaults(
  * Build the setting JSON string from form extra settings
  */
 function buildSettingJSON(formData: ChannelFormValues): string {
-  const settingObj = {
+  const settingObj: Record<string, unknown> = {
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,
     proxy: formData.proxy || '',
     pass_through_body_enabled: formData.pass_through_body_enabled || false,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
+  }
+  if (formData.type === 60) {
+    settingObj.create_enabled = formData.create_enabled
+    settingObj.poll_enabled = formData.poll_enabled
+    settingObj.max_concurrency = formData.max_concurrency
+    settingObj.max_task_cost_microunits_cny =
+      formData.max_task_cost_microunits_cny
+    settingObj.hard_daily_budget_microunits_cny =
+      formData.hard_daily_budget_microunits_cny
   }
   return JSON.stringify(settingObj)
 }
@@ -564,12 +623,15 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
   } else {
     if ('disable_store' in settingsObj) delete settingsObj.disable_store
-    if ('allow_safety_identifier' in settingsObj)
+    if ('allow_safety_identifier' in settingsObj) {
       delete settingsObj.allow_safety_identifier
-    if ('allow_include_obfuscation' in settingsObj)
+    }
+    if ('allow_include_obfuscation' in settingsObj) {
       delete settingsObj.allow_include_obfuscation
-    if (formData.type !== 14 && 'allow_inference_geo' in settingsObj)
+    }
+    if (formData.type !== 14 && 'allow_inference_geo' in settingsObj) {
       delete settingsObj.allow_inference_geo
+    }
   }
 
   // Anthropic (type 14): claude_beta_query, allow_inference_geo, allow_speed
@@ -592,14 +654,14 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.upstream_model_update_auto_sync_enabled =
       settingsObj.upstream_model_update_check_enabled === true &&
       formData.upstream_model_update_auto_sync_enabled === true
-    settingsObj.upstream_model_update_ignored_models = Array.from(
-      new Set(
+    settingsObj.upstream_model_update_ignored_models = [
+      ...new Set(
         String(formData.upstream_model_update_ignored_models || '')
           .split(',')
           .map((model) => model.trim())
           .filter(Boolean)
-      )
-    )
+      ),
+    ]
     if (
       !Array.isArray(settingsObj.upstream_model_update_last_detected_models) ||
       settingsObj.upstream_model_update_check_enabled !== true
@@ -640,17 +702,22 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
 } {
-  const mode = formData.multi_key_mode || 'single'
+  const isWxmaasSeedance = formData.type === 60
+  const mode = isWxmaasSeedance ? 'single' : formData.multi_key_mode || 'single'
 
   const channel: Partial<Channel> = {
     name: formData.name,
     type: formData.type,
-    base_url: normalizeBaseUrl(formData.base_url) || null,
+    base_url: isWxmaasSeedance
+      ? 'https://wxmaas.clarmic.com'
+      : normalizeBaseUrl(formData.base_url) || null,
     key: formData.key,
     openai_organization: formData.openai_organization || null,
-    models: formData.models,
+    models: isWxmaasSeedance ? 'verdantflare-sd2' : formData.models,
     group: formatGroups(formData.group),
-    model_mapping: formData.model_mapping || null,
+    model_mapping: isWxmaasSeedance
+      ? '{"verdantflare-sd2":"doubao-seedance-2.0"}'
+      : formData.model_mapping || null,
     priority: formData.priority || null,
     weight: formData.weight || null,
     test_model: formData.test_model || null,

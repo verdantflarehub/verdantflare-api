@@ -547,14 +547,58 @@
       "post": {
         "summary": "创建视频 ",
         "deprecated": false,
-        "description": "OpenAI 兼容的视频生成接口。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
+        "description": "OpenAI 兼容的视频生成接口。使用公开模型 `verdantflare-sd2` 时，请发送 JSON 请求，并持久化一个 UUID 作为 `Idempotency-Key`；`X-Request-ID` 是兼容别名。至少提供其中一个 Header；若同时提供，二者必须是同一个 UUID。提交结果不明时不要再次 POST，应通过 `/v1/video-submissions/{client_request_id}` 恢复。其他视频模型仍可使用既有 multipart/form-data 契约。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
         "operationId": "createVideo",
         "tags": [
           "视频生成/Sora兼容格式"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "`verdantflare-sd2` 创建意图的 UUID。与 `X-Request-ID` 至少提供一个；同一 UUID 只能绑定同一请求体。",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "幂等 UUID 的兼容别名。若与 `Idempotency-Key` 同时发送，二者必须相同。",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SD2CreateRequest"
+              },
+              "example": {
+                "model": "verdantflare-sd2",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "雨后城门外，一名东汉武将沿土路稳步前行，电影级写实运镜。"
+                      }
+                    ]
+                  }
+                ],
+                "duration": 10,
+                "ratio": "16:9",
+                "generate_audio": true,
+                "watermark": false
+              }
+            },
             "multipart/form-data": {
               "schema": {
                 "type": "object",
@@ -584,7 +628,8 @@
               },
               "examples": {}
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -650,8 +695,7 @@
                     "model",
                     "status",
                     "progress",
-                    "created_at",
-                    "seconds"
+                    "created_at"
                   ]
                 },
                 "example": {
@@ -672,7 +716,108 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "API Token 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "Token、用户或模型访问策略拒绝请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "幂等冲突，或原提交仍在处理中／结果未知；使用原 UUID 查询 Submission，不要重新创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SD2TaskError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "并发、频率、额度或预算限制拒绝请求；不要盲目更换 UUID 重投",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "创建处理失败；若发送结果不明，使用原 UUID 查询 Submission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {}
+          },
+          "503": {
+            "description": "SD2 Submission 账本、身份密钥或创建开关未就绪；请求未获准发送到供应商",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
                 }
               }
             },
@@ -743,8 +888,7 @@
                     "model",
                     "status",
                     "progress",
-                    "created_at",
-                    "seconds"
+                    "created_at"
                   ]
                 },
                 "example": {
@@ -819,6 +963,80 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/video-submissions/{client_request_id}": {
+      "get": {
+        "summary": "按幂等 UUID 恢复视频提交",
+        "deprecated": false,
+        "description": "查询当前 API Token 所属用户的 SD2 Submission 安全视图。POST 超时、断线或返回结果不明时，应使用原 UUID 查询此接口，不能更换 UUID 再次创建。只有 `CONFIRMED` 状态返回 `public_task_id`；不存在、格式非法和不属于当前用户的 UUID 均统一返回 404。",
+        "operationId": "getVideoSubmission",
+        "tags": [
+          "视频生成/Sora兼容格式"
+        ],
+        "parameters": [
+          {
+            "name": "client_request_id",
+            "in": "path",
+            "description": "创建请求使用的幂等 UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取 owner-scoped Submission 状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubmissionUserView"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "API Token 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimpleAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "Submission 不存在、UUID 非法或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SD2TaskError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "Submission 查询失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SD2TaskError"
                 }
               }
             },
@@ -1167,17 +1385,45 @@
       "post": {
         "summary": "创建视频生成任务",
         "deprecated": false,
-        "description": "提交视频生成任务，支持文生视频和图生视频。\n\n返回任务 ID，可通过 GET 接口查询任务状态。\n",
+        "description": "提交视频生成任务，支持文生视频和图生视频。该路径是 `/v1/videos` 的兼容创建别名；调用 `verdantflare-sd2` 时适用相同的 UUID 幂等与 Submission 恢复契约。\n\n返回任务 ID，可通过 GET 接口查询任务状态。\n",
         "operationId": "createVideoGeneration",
         "tags": [
           "视频生成"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "`verdantflare-sd2` 创建意图的 UUID。与 `X-Request-ID` 至少提供一个；同一 UUID 只能绑定同一请求体。",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "幂等 UUID 的兼容别名。若与 `Idempotency-Key` 同时发送，二者必须相同。",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/VideoRequest"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/VideoRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SD2CreateRequest"
+                  }
+                ]
               },
               "example": {
                 "model": "kling-v1",
@@ -1196,7 +1442,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/VideoResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/VideoResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OpenAIVideo"
+                    }
+                  ]
                 }
               }
             },
@@ -1207,7 +1460,108 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "API Token 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "Token、用户或模型访问策略拒绝请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "SD2 幂等冲突，或原提交仍在处理中／结果未知；使用原 UUID 查询 Submission，不要重新创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SD2TaskError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "并发、频率、额度或预算限制拒绝请求；不要盲目更换 UUID 重投",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "创建处理失败；若发送结果不明，使用原 UUID 查询 Submission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {}
+          },
+          "503": {
+            "description": "SD2 Submission 账本、身份密钥或创建开关未就绪；请求未获准发送到供应商",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SD2TaskError"
+                    }
+                  ]
                 }
               }
             },
@@ -1248,7 +1602,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/VideoTaskResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/VideoTaskResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OpenAIVideo"
+                    }
+                  ]
                 }
               }
             },
@@ -2309,6 +2670,417 @@
   },
   "components": {
     "schemas": {
+      "SD2CreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "VerdantFlare SD2 的供应商无关公开创建契约。提示词／媒体 URL 及所有参数共同参与幂等身份；媒体 URL 必须是无凭据、无 fragment 的公网 HTTPS 地址，最多 9 张图片、3 个视频和 1 个音频。首个逻辑内容项必须是非空文本。",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "enum": [
+              "verdantflare-sd2"
+            ]
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "description": "兼容的纯文本提示词；推荐使用 messages。"
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SD2Message"
+            }
+          },
+          "image": {
+            "type": "string",
+            "format": "uri",
+            "description": "单张兼容图片 URL。"
+          },
+          "images": {
+            "type": "array",
+            "maxItems": 9,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "video": {
+            "type": "string",
+            "format": "uri",
+            "description": "单个兼容视频 URL。"
+          },
+          "videos": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "audio": {
+            "type": "string",
+            "format": "uri",
+            "description": "单个兼容音频 URL。"
+          },
+          "audios": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "duration": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 15,
+            "default": 10
+          },
+          "seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 15,
+            "description": "duration 的兼容别名；同时提供时必须相同。"
+          },
+          "ratio": {
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1",
+              "4:3",
+              "3:4"
+            ],
+            "default": "16:9"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "720P"
+            ],
+            "default": "720P"
+          },
+          "generate_audio": {
+            "type": "boolean",
+            "default": true
+          },
+          "watermark": {
+            "type": "boolean",
+            "default": false
+          },
+          "seed": {
+            "type": "integer",
+            "default": -1
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/SD2Metadata"
+          }
+        }
+      },
+      "SD2Message": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user"
+            ]
+          },
+          "content": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/components/schemas/SD2ContentItem"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "SD2ContentItem": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "text"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "image_url"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "image_url"
+                ]
+              },
+              "image_url": {
+                "$ref": "#/components/schemas/SD2MediaURL"
+              },
+              "role": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "video_url"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "video_url"
+                ]
+              },
+              "video_url": {
+                "$ref": "#/components/schemas/SD2MediaURL"
+              },
+              "role": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "audio_url"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "audio_url"
+                ]
+              },
+              "audio_url": {
+                "$ref": "#/components/schemas/SD2MediaURL"
+              }
+            }
+          }
+        ]
+      },
+      "SD2MediaURL": {
+        "oneOf": [
+          {
+            "type": "string",
+            "format": "uri"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "url"
+            ],
+            "properties": {
+              "url": {
+                "type": "string",
+                "format": "uri"
+              }
+            }
+          }
+        ]
+      },
+      "SD2Metadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/components/schemas/SD2ContentItem"
+                }
+              }
+            ]
+          },
+          "duration": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 15
+          },
+          "seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 15
+          },
+          "ratio": {
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1",
+              "4:3",
+              "3:4"
+            ]
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "720P"
+            ]
+          },
+          "generate_audio": {
+            "type": "boolean"
+          },
+          "watermark": {
+            "type": "boolean"
+          },
+          "seed": {
+            "type": "integer"
+          }
+        }
+      },
+      "TaskSubmissionUserView": {
+        "type": "object",
+        "required": [
+          "client_request_id",
+          "submission_state",
+          "billing_state",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "submission_state": {
+            "type": "string",
+            "enum": [
+              "PREPARED",
+              "SENDING",
+              "CONFIRMED",
+              "REJECTED",
+              "UNKNOWN"
+            ]
+          },
+          "public_task_id": {
+            "type": "string",
+            "description": "仅 CONFIRMED 状态返回。"
+          },
+          "billing_state": {
+            "type": "string",
+            "enum": [
+              "NONE",
+              "RESERVED",
+              "COMMITTED",
+              "SETTLED",
+              "REFUNDED",
+              "RECONCILE_REQUIRED"
+            ]
+          },
+          "error_code": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 秒"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 秒"
+          }
+        }
+      },
+      "SD2TaskError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true,
+            "properties": {
+              "client_request_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "submission_url": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "SimpleAPIError": {
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -4334,6 +5106,14 @@
       "OpenAIVideo": {
         "type": "object",
         "description": "OpenAI 兼容的视频对象",
+        "required": [
+          "id",
+          "object",
+          "model",
+          "status",
+          "progress",
+          "created_at"
+        ],
         "properties": {
           "id": {
             "type": "string",

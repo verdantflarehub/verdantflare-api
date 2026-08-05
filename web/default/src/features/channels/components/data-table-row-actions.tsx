@@ -192,7 +192,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               variant='ghost'
               size='icon-sm'
               onClick={handleDirectTest}
-              disabled={isTesting}
+              disabled={isTesting || channel.type === 60}
               aria-label={t('Test Connection')}
             />
           }
@@ -203,10 +203,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             <Gauge className='size-4' />
           )}
         </TooltipTrigger>
-        <TooltipContent>{t('Test Connection')}</TooltipContent>
+        <TooltipContent>
+          {channel.type === 60
+            ? t('Create tests are disabled for this paid video channel')
+            : t('Test Connection')}
+        </TooltipContent>
       </Tooltip>
 
-      {layout === 'card' && (
+      {layout === 'card' && channel.type !== 60 && (
         <Tooltip>
           <TooltipTrigger
             render={
@@ -274,12 +278,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           )}
 
           {/* Test Connection */}
-          <DropdownMenuItem onClick={handleTest}>
-            {t('Test Connection')}
-            <DropdownMenuShortcut>
-              <PlugZap size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {channel.type !== 60 && (
+            <DropdownMenuItem onClick={handleTest}>
+              {t('Test Connection')}
+              <DropdownMenuShortcut>
+                <PlugZap size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
 
           {/* Query Balance */}
           <DropdownMenuItem onClick={handleQueryBalance}>

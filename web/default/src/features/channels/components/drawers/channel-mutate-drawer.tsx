@@ -280,6 +280,11 @@ const SENSITIVE_FORM_FIELDS = [
   'pass_through_body_enabled',
   'system_prompt',
   'system_prompt_override',
+  'create_enabled',
+  'poll_enabled',
+  'max_concurrency',
+  'max_task_cost_microunits_cny',
+  'hard_daily_budget_microunits_cny',
   'allow_service_tier',
   'disable_store',
   'allow_safety_identifier',
@@ -762,7 +767,9 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isChannelDetailLoading = isEditing && isChannelLoading
   const supportsMultiKeyAddMode =
-    currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+    currentType !== 57 &&
+    currentType !== 60 &&
+    !(currentType === 41 && vertexKeyType === 'api_key')
   const addModeOptions = useMemo(
     () =>
       supportsMultiKeyAddMode
@@ -1190,6 +1197,19 @@ export function ChannelMutateDrawer({
       if (!currentOther || currentOther === '') {
         form.setValue('other', 'v2.1')
       }
+    }
+
+    if (currentType === 60) {
+      form.setValue('base_url', 'https://wxmaas.clarmic.com')
+      form.setValue('models', 'verdantflare-sd2')
+      form.setValue(
+        'model_mapping',
+        '{"verdantflare-sd2":"doubao-seedance-2.0"}'
+      )
+      form.setValue('multi_key_mode', 'single')
+      form.setValue('create_enabled', false)
+      form.setValue('poll_enabled', true)
+      form.setValue('max_concurrency', 1)
     }
   }, [currentType, isEditing, form])
 
@@ -1966,6 +1986,156 @@ export function ChannelMutateDrawer({
                           </Alert>
                         )}
 
+                        {currentType === 60 && (
+                          <div className='border-border/60 bg-muted/10 space-y-4 rounded-lg border p-4'>
+                            <div>
+                              <div className='text-sm font-medium'>
+                                {t('Paid task safety gate')}
+                              </div>
+                              <p className='text-muted-foreground mt-1 text-xs'>
+                                {t(
+                                  'Missing or invalid limits are rejected by the backend. Amounts use CNY microunits.'
+                                )}
+                              </p>
+                            </div>
+                            <fieldset
+                              disabled={sensitiveLocked}
+                              className='space-y-4 disabled:opacity-60'
+                            >
+                              <div className='grid gap-3 sm:grid-cols-2'>
+                                <FormField
+                                  control={form.control}
+                                  name='create_enabled'
+                                  render={({ field }) => (
+                                    <FormItem
+                                      className={sideDrawerSwitchItemClassName()}
+                                    >
+                                      <div className='flex flex-col gap-0.5'>
+                                        <FormLabel>
+                                          {t('Allow paid creation')}
+                                        </FormLabel>
+                                        <FormDescription className='text-xs'>
+                                          {t('Disabled by default')}
+                                        </FormDescription>
+                                      </div>
+                                      <FormControl>
+                                        <Switch
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                        />
+                                      </FormControl>
+                                    </FormItem>
+                                  )}
+                                />
+                                <FormField
+                                  control={form.control}
+                                  name='poll_enabled'
+                                  render={({ field }) => (
+                                    <FormItem
+                                      className={sideDrawerSwitchItemClassName()}
+                                    >
+                                      <div className='flex flex-col gap-0.5'>
+                                        <FormLabel>
+                                          {t('Allow confirmed-task polling')}
+                                        </FormLabel>
+                                        <FormDescription className='text-xs'>
+                                          {t(
+                                            'Independent from the creation switch'
+                                          )}
+                                        </FormDescription>
+                                      </div>
+                                      <FormControl>
+                                        <Switch
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                        />
+                                      </FormControl>
+                                    </FormItem>
+                                  )}
+                                />
+                              </div>
+                              <div className='grid gap-4 sm:grid-cols-3'>
+                                <FormField
+                                  control={form.control}
+                                  name='max_concurrency'
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>
+                                        {t('Max concurrency')}
+                                      </FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          type='number'
+                                          min={1}
+                                          max={1}
+                                          readOnly
+                                          value={field.value}
+                                          onChange={(event) =>
+                                            field.onChange(
+                                              Number(event.target.value)
+                                            )
+                                          }
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                                <FormField
+                                  control={form.control}
+                                  name='max_task_cost_microunits_cny'
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>
+                                        {t('Single-task cost limit')}
+                                      </FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          type='number'
+                                          min={1}
+                                          step={1}
+                                          value={field.value}
+                                          onChange={(event) =>
+                                            field.onChange(
+                                              Number(event.target.value)
+                                            )
+                                          }
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                                <FormField
+                                  control={form.control}
+                                  name='hard_daily_budget_microunits_cny'
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>
+                                        {t('Hard daily budget (UTC)')}
+                                      </FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          type='number'
+                                          min={1}
+                                          step={1}
+                                          value={field.value}
+                                          onChange={(event) =>
+                                            field.onChange(
+                                              Number(event.target.value)
+                                            )
+                                          }
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </div>
+                            </fieldset>
+                          </div>
+                        )}
+
                         {sensitiveLocked && (
                           <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
                             <AlertDescription>
@@ -2629,6 +2799,7 @@ export function ChannelMutateDrawer({
                                           FIELD_PLACEHOLDERS.BASE_URL
                                         )}
                                         {...field}
+                                        readOnly={currentType === 60}
                                       />
                                     </FormControl>
                                     <FormDescription>
@@ -3130,6 +3301,7 @@ export function ChannelMutateDrawer({
                                       createLabel='Add custom model "{{value}}"'
                                       maxVisibleChips={8}
                                       copyChipOnClick
+                                      disabled={currentType === 60}
                                     />
                                   </FormControl>
                                   {modelMappingGuardrail.exposedTargetModels
@@ -3367,7 +3539,9 @@ export function ChannelMutateDrawer({
                                     <ModelMappingEditor
                                       value={field.value || ''}
                                       onChange={field.onChange}
-                                      disabled={isSubmitting}
+                                      disabled={
+                                        isSubmitting || currentType === 60
+                                      }
                                       sourceModelOptions={currentModelsArray}
                                       targetModelOptions={modelOptions.map(
                                         (option) => option.value

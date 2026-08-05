@@ -37,6 +37,11 @@ func TestChannelOwnerNameUsesAdaptorChannelName(t *testing.T) {
 			expected:    "verdantflare",
 		},
 		{
+			name:        "wxmaas seedance white label",
+			channelType: constant.ChannelTypeWxmaasSeedance,
+			expected:    "verdantflare",
+		},
+		{
 			name:        "azure fallback",
 			channelType: constant.ChannelTypeAzure,
 			expected:    "azure",

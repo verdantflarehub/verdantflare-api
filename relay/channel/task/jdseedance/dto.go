@@ -27,6 +27,8 @@ type submitRequest struct {
 	Images        []string       `json:"images,omitempty"`
 	Video         string         `json:"video,omitempty"`
 	Videos        []string       `json:"videos,omitempty"`
+	Audio         string         `json:"audio,omitempty"`
+	Audios        []string       `json:"audios,omitempty"`
 	Duration      int            `json:"duration,omitempty"`
 	Seconds       string         `json:"seconds,omitempty"`
 	Ratio         string         `json:"ratio,omitempty"`

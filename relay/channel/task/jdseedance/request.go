@@ -2,6 +2,7 @@ package jdseedance
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -13,11 +14,13 @@ import (
 func normalizeSubmitRequest(req submitRequest) (relaycommon.TaskSubmitReq, error) {
 	metadata := cloneMetadata(req.Metadata)
 
-	if req.Duration > 0 {
-		metadata["duration"] = req.Duration
+	duration, hasDuration, err := resolveDurationAliases(req)
+	if err != nil {
+		return relaycommon.TaskSubmitReq{}, err
 	}
-	if strings.TrimSpace(req.Seconds) != "" {
-		metadata["duration"] = req.Seconds
+	delete(metadata, "seconds")
+	if hasDuration {
+		metadata["duration"] = duration
 	}
 	if strings.TrimSpace(req.Ratio) != "" {
 		metadata["ratio"] = strings.TrimSpace(req.Ratio)
@@ -29,7 +32,20 @@ func normalizeSubmitRequest(req submitRequest) (relaycommon.TaskSubmitReq, error
 		metadata["watermark"] = *req.Watermark
 	}
 
+	messageContent, messageText, err := contentItemsFromMessages(req.Messages)
+	if err != nil {
+		return relaycommon.TaskSubmitReq{}, err
+	}
 	content := make([]contentItem, 0)
+	if len(messageContent) > 0 {
+		content = append(content, messageContent...)
+	} else if rawContent, ok := metadata["content"]; ok {
+		metadataContent, err := contentItemsFromAny(rawContent)
+		if err != nil {
+			return relaycommon.TaskSubmitReq{}, err
+		}
+		content = append(content, metadataContent...)
+	}
 	for _, image := range append(singleton(req.Image), req.Images...) {
 		image = strings.TrimSpace(image)
 		if image == "" {
@@ -52,19 +68,15 @@ func normalizeSubmitRequest(req submitRequest) (relaycommon.TaskSubmitReq, error
 			Role:     defaultVideoRole,
 		})
 	}
-
-	messageContent, messageText, err := contentItemsFromMessages(req.Messages)
-	if err != nil {
-		return relaycommon.TaskSubmitReq{}, err
-	}
-	if len(messageContent) > 0 {
-		content = append(content, messageContent...)
-	} else if rawContent, ok := metadata["content"]; ok {
-		metadataContent, err := contentItemsFromAny(rawContent)
-		if err != nil {
-			return relaycommon.TaskSubmitReq{}, err
+	for _, audio := range append(singleton(req.Audio), req.Audios...) {
+		audio = strings.TrimSpace(audio)
+		if audio == "" {
+			continue
 		}
-		content = append(content, metadataContent...)
+		content = append(content, contentItem{
+			Type:     contentTypeAudioURL,
+			AudioURL: &mediaURL{URL: audio},
+		})
 	}
 
 	prompt := strings.TrimSpace(req.Prompt)
@@ -75,7 +87,7 @@ func normalizeSubmitRequest(req submitRequest) (relaycommon.TaskSubmitReq, error
 		prompt = strings.TrimSpace(textFromContent(content))
 	}
 	if prompt != "" && !hasTextContent(content) {
-		content = append(content, contentItem{Type: contentTypeText, Text: prompt})
+		content = append([]contentItem{{Type: contentTypeText, Text: prompt}}, content...)
 	}
 	if len(content) == 0 {
 		return relaycommon.TaskSubmitReq{}, fmt.Errorf("content is required")
@@ -93,6 +105,61 @@ func normalizeSubmitRequest(req submitRequest) (relaycommon.TaskSubmitReq, error
 		Seconds:  common.Interface2String(metadata["duration"]),
 		Metadata: metadata,
 	}, nil
+}
+
+func resolveDurationAliases(req submitRequest) (int, bool, error) {
+	candidates := make([]any, 0, 4)
+	if req.Duration > 0 {
+		candidates = append(candidates, req.Duration)
+	}
+	if strings.TrimSpace(req.Seconds) != "" {
+		candidates = append(candidates, req.Seconds)
+	}
+	for _, key := range []string{"duration", "seconds"} {
+		if value, ok := req.Metadata[key]; ok && value != nil {
+			candidates = append(candidates, value)
+		}
+	}
+	if len(candidates) == 0 {
+		return 0, false, nil
+	}
+	selected := 0
+	for index, raw := range candidates {
+		parsed, ok := strictIntFromAny(raw)
+		if !ok {
+			return 0, false, fmt.Errorf("duration must be an integer")
+		}
+		if index > 0 && parsed != selected {
+			return 0, false, fmt.Errorf("duration and seconds must describe the same value")
+		}
+		selected = parsed
+	}
+	return selected, true, nil
+}
+
+func strictIntFromAny(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		maxInt := int64(^uint(0) >> 1)
+		minInt := -maxInt - 1
+		if value > maxInt || value < minInt {
+			return 0, false
+		}
+		return int(value), true
+	case float64:
+		integerLimit := math.Ldexp(1, strconv.IntSize-1)
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < -integerLimit || value >= integerLimit || math.Trunc(value) != value {
+			return 0, false
+		}
+		return int(value), true
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func convertToCreateRequest(req relaycommon.TaskSubmitReq) (*createRequest, error) {

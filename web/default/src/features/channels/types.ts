@@ -86,6 +86,11 @@ export interface ChannelSettings {
   pass_through_body_enabled?: boolean
   system_prompt?: string
   system_prompt_override?: boolean
+  create_enabled?: boolean
+  poll_enabled?: boolean
+  max_concurrency?: number
+  max_task_cost_microunits_cny?: number
+  hard_daily_budget_microunits_cny?: number
 }
 
 export interface ChannelOtherSettings {

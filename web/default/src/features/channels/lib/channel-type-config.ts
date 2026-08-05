@@ -145,6 +145,18 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'jd-seedance-sd2',
     },
   },
+  60: {
+    id: 60,
+    name: CHANNEL_TYPES[60],
+    icon: 'doubao',
+    defaultBaseUrl: 'https://wxmaas.clarmic.com',
+    supportedModels: ['verdantflare-sd2'],
+    hints: {
+      baseUrl: 'Locked: https://wxmaas.clarmic.com',
+      key: 'Exactly one wxmaas API key',
+      models: 'Locked: verdantflare-sd2 → doubao-seedance-2.0 (720P)',
+    },
+  },
   58: {
     id: 58,
     name: CHANNEL_TYPES[58],

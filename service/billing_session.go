@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -44,8 +45,24 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	if s.settled {
 		return nil
 	}
+	if actualQuota < 0 || actualQuota > common.MaxQuota {
+		return errors.New("actual quota is outside the supported range")
+	}
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
+		s.settled = true
+		return nil
+	}
+	if SD2SubmissionLedgerEnabled() && delta > 0 {
+		tokenConsumed, err := reserveAuthoritativeBillingQuota(s.relayInfo, s.funding, delta)
+		if err != nil {
+			return err
+		}
+		s.tokenConsumed += tokenConsumed
+		s.fundingSettled = true
+		if s.funding.Source() == BillingSourceSubscription {
+			s.relayInfo.SubscriptionPostDelta += int64(delta)
+		}
 		s.settled = true
 		return nil
 	}
@@ -58,7 +75,14 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	}
 	// 2) 调整令牌额度
 	var tokenErr error
-	if !s.relayInfo.IsPlayground {
+	meterToken := !s.relayInfo.IsPlayground && !s.relayInfo.TokenUnlimited
+	if SD2SubmissionLedgerEnabled() {
+		// The authoritative reservation reads the token row inside the funding
+		// transaction, so its consumed amount supersedes a potentially stale
+		// TokenUnlimited value copied from middleware.
+		meterToken = !s.relayInfo.IsPlayground && s.tokenConsumed > 0
+	}
+	if meterToken {
 		if delta > 0 {
 			tokenErr = model.DecreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, delta)
 		} else {
@@ -137,6 +161,9 @@ func (s *BillingSession) needsRefundLocked() bool {
 	if s.tokenConsumed > 0 {
 		return true
 	}
+	if wallet, ok := s.funding.(*WalletFunding); ok && wallet.consumed > 0 {
+		return true
+	}
 	// 订阅可能在 tokenConsumed=0 时仍预扣了额度
 	if sub, ok := s.funding.(*SubscriptionFunding); ok && sub.preConsumed > 0 {
 		return true
@@ -152,6 +179,9 @@ func (s *BillingSession) GetPreConsumedQuota() int {
 func (s *BillingSession) Reserve(targetQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if targetQuota < 0 || targetQuota > common.MaxQuota {
+		return errors.New("target quota is outside the supported range")
+	}
 
 	if s.settled || s.refunded || s.trusted || targetQuota <= s.preConsumedQuota {
 		return nil
@@ -159,6 +189,17 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 
 	delta := targetQuota - s.preConsumedQuota
 	if delta <= 0 {
+		return nil
+	}
+	if SD2SubmissionLedgerEnabled() {
+		tokenConsumed, err := reserveAuthoritativeBillingQuota(s.relayInfo, s.funding, delta)
+		if err != nil {
+			return err
+		}
+		s.preConsumedQuota += delta
+		s.tokenConsumed += tokenConsumed
+		s.extraReserved += delta
+		s.syncRelayInfo()
 		return nil
 	}
 
@@ -171,7 +212,9 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	}
 
 	s.preConsumedQuota += delta
-	s.tokenConsumed += delta
+	if !s.relayInfo.IsPlayground && !s.relayInfo.TokenUnlimited {
+		s.tokenConsumed += delta
+	}
 	s.extraReserved += delta
 	s.syncRelayInfo()
 	return nil
@@ -184,15 +227,31 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 // preConsume 执行预扣费：信任检查 -> 令牌预扣 -> 资金来源预扣。
 // 任一步骤失败时原子回滚已完成的步骤。
 func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIError {
+	if quota < 0 || quota > common.MaxQuota {
+		return types.NewError(errors.New("pre-consume quota is outside the supported range"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
 	effectiveQuota := quota
 
 	// ---- 信任额度旁路 ----
-	if s.shouldTrust(c) {
+	if !SD2SubmissionLedgerEnabled() && s.shouldTrust(c) {
 		s.trusted = true
 		effectiveQuota = 0
 		logger.LogInfo(c, fmt.Sprintf("用户 %d 额度充足, 信任且不需要预扣费 (funding=%s)", s.relayInfo.UserId, s.funding.Source()))
 	} else if effectiveQuota > 0 {
 		logger.LogInfo(c, fmt.Sprintf("用户 %d 需要预扣费 %s (funding=%s)", s.relayInfo.UserId, logger.FormatQuota(effectiveQuota), s.funding.Source()))
+	}
+	if SD2SubmissionLedgerEnabled() && effectiveQuota > 0 {
+		tokenConsumed, err := reserveAuthoritativeBillingQuota(s.relayInfo, s.funding, effectiveQuota)
+		if err != nil {
+			if errors.Is(err, errAuthoritativeBillingQuotaInsufficient) || strings.Contains(err.Error(), "subscription quota insufficient") || strings.Contains(err.Error(), "no active subscription") {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+		}
+		s.tokenConsumed = tokenConsumed
+		s.preConsumedQuota = effectiveQuota
+		s.syncRelayInfo()
+		return nil
 	}
 
 	// ---- 1) 预扣令牌额度 ----
@@ -200,7 +259,9 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 		if err := PreConsumeTokenQuota(s.relayInfo, effectiveQuota); err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
-		s.tokenConsumed = effectiveQuota
+		if !s.relayInfo.IsPlayground && !s.relayInfo.TokenUnlimited {
+			s.tokenConsumed = effectiveQuota
+		}
 	}
 
 	// ---- 2) 预扣资金来源 ----
@@ -269,7 +330,7 @@ func (s *BillingSession) rollbackFundingReserve(delta int) {
 }
 
 func (s *BillingSession) reserveToken(delta int) error {
-	if delta <= 0 || s.relayInfo.IsPlayground {
+	if delta <= 0 || s.relayInfo.IsPlayground || s.relayInfo.TokenUnlimited {
 		return nil
 	}
 	if err := PreConsumeTokenQuota(s.relayInfo, delta); err != nil {
@@ -348,7 +409,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
-		userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+		userQuota, err := model.GetUserQuota(relayInfo.UserId, SD2SubmissionLedgerEnabled())
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}

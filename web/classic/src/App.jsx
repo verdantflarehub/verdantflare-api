@@ -41,6 +41,7 @@ import Chat2Link from './pages/Chat2Link';
 import MjProxy from './pages/Midjourney';
 import Pricing from './pages/Pricing';
 import Task from './pages/Task';
+import TaskSubmission from './pages/TaskSubmission';
 import ModelPage from './pages/Model';
 import ModelDeploymentPage from './pages/ModelDeployment';
 import Playground from './pages/Playground';
@@ -303,6 +304,14 @@ function App() {
                 <MjProxy />
               </Suspense>
             </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/task-submissions'
+          element={
+            <AdminRoute>
+              <TaskSubmission />
+            </AdminRoute>
           }
         />
         <Route

@@ -41,6 +41,10 @@ func TestMain(m *testing.M) {
 
 	if err := db.AutoMigrate(
 		&model.Task{},
+		&model.TaskSubmission{},
+		&model.TaskSubmissionBillingEntry{},
+		&model.TaskSubmissionReconciliationReview{},
+		&model.QuotaCacheInvalidationOutbox{},
 		&model.User{},
 		&model.Token{},
 		&model.Log{},
@@ -64,6 +68,10 @@ func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
 		model.DB.Exec("DELETE FROM tasks")
+		model.DB.Exec("DELETE FROM task_submissions")
+		model.DB.Exec("DELETE FROM task_submission_billing_entries")
+		model.DB.Exec("DELETE FROM task_submission_reconciliation_reviews")
+		model.DB.Exec("DELETE FROM quota_cache_invalidation_outboxes")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
 		model.DB.Exec("DELETE FROM logs")
@@ -73,6 +81,11 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
 	})
+	setting := `{"create_enabled":true,"poll_enabled":true,"max_concurrency":1,"max_task_cost_microunits_cny":1000000,"hard_daily_budget_microunits_cny":100000000}`
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: 91, Type: 60, Name: "wxmaas-safety-test", Key: "test-only", Status: common.ChannelStatusEnabled,
+		Setting: &setting,
+	}).Error)
 }
 
 func seedUser(t *testing.T, id int, quota int) {

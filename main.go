@@ -124,6 +124,7 @@ func main() {
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
+	service.StartQuotaCacheInvalidationOutboxWorker()
 
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
@@ -308,6 +309,12 @@ func InitResources() error {
 	ratio_setting.InitRatioSettings()
 
 	service.InitHttpClient()
+	if err = service.ConfigureSD2SubmissionIdentityFromEnv(); err != nil {
+		return err
+	}
+	if err = service.ConfigureSD2ResultArchiveFromEnv(); err != nil {
+		return err
+	}
 
 	service.InitTokenEncoders()
 

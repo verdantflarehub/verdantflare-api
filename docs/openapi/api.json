@@ -4343,6 +4343,410 @@
         ]
       }
     },
+    "/api/task-submissions": {
+      "get": {
+        "summary": "分页查询 SD2 Submission",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）。返回经过脱敏的 Submission 账本视图，用于检索创建、轮询、计费、供应商成本与归档状态。",
+        "operationId": "adminListTaskSubmissions",
+        "tags": [
+          "任务"
+        ],
+        "x-required-role": "admin",
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "页码",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "每页条数",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "client_request_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "public_task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider_request_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "upstream_task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskSubmissionState"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "安全错误码",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "channel_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "start_timestamp",
+            "in": "query",
+            "description": "创建时间下界，Unix 秒",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "end_timestamp",
+            "in": "query",
+            "description": "创建时间上界，Unix 秒",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTaskSubmissionListEnvelope"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "筛选参数非法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "未登录或凭据无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "管理员权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "SessionAuth1": [],
+            "NewApiUser1": []
+          },
+          {
+            "AccessToken1": [],
+            "NewApiUser1": []
+          }
+        ]
+      }
+    },
+    "/api/task-submissions/{id}": {
+      "get": {
+        "summary": "获取 SD2 Submission 对账详情",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）。快照字段已脱敏，原始提示词、媒体 URL、凭据与原始 evidence 不会返回。",
+        "operationId": "adminGetTaskSubmission",
+        "tags": [
+          "任务"
+        ],
+        "x-required-role": "admin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Submission 数据库 ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTaskSubmissionDetailEnvelope"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "Submission ID 非法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "未登录或凭据无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "管理员权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "Submission 不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "SessionAuth1": [],
+            "NewApiUser1": []
+          },
+          {
+            "AccessToken1": [],
+            "NewApiUser1": []
+          }
+        ]
+      }
+    },
+    "/api/task-submissions/{id}/reconcile": {
+      "post": {
+        "summary": "审核并对账 UNKNOWN Submission",
+        "deprecated": false,
+        "description": "👑 需要超级管理员权限（Root）。每次请求先写入当前管理员的不可变审计记录。`bind` 必须提供 upstream_task_id；`not_created` 不得提供。服务端还会独立校验结构化供应商 evidence；弱关联 bind 需要两个不同管理员审批。",
+        "operationId": "adminReconcileTaskSubmission",
+        "tags": [
+          "任务"
+        ],
+        "x-required-role": "root",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Submission 数据库 ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminTaskSubmissionReconcileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "对账决策已执行",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTaskSubmissionReconcileEnvelope"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "202": {
+            "description": "审核已记录，等待已验证 evidence 或第二名不同管理员",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTaskSubmissionPendingReviewEnvelope"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "请求、决策或 evidence 非法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "未登录或凭据无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "非 Root 管理员",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "Submission 不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "Submission 状态或 version 已变化，CAS 对账被拒绝",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAPIError"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "SessionAuth1": [],
+            "NewApiUser1": []
+          },
+          {
+            "AccessToken1": [],
+            "NewApiUser1": []
+          }
+        ]
+      }
+    },
     "/api/task/self": {
       "get": {
         "summary": "获取个人任务",
@@ -4956,6 +5360,657 @@
             "type": "string"
           },
           "data": {}
+        }
+      },
+      "TaskSubmissionState": {
+        "type": "string",
+        "enum": [
+          "PREPARED",
+          "SENDING",
+          "CONFIRMED",
+          "REJECTED",
+          "UNKNOWN"
+        ]
+      },
+      "TaskSubmissionPollState": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "ACTIVE",
+          "BACKOFF",
+          "PAUSED_CREDENTIAL",
+          "STALE",
+          "TERMINAL"
+        ]
+      },
+      "TaskSubmissionBillingState": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "RESERVED",
+          "COMMITTED",
+          "SETTLED",
+          "REFUNDED",
+          "RECONCILE_REQUIRED"
+        ]
+      },
+      "TaskSubmissionProviderCostState": {
+        "type": "string",
+        "enum": [
+          "NOT_APPLICABLE",
+          "PENDING",
+          "RECORDED",
+          "RECONCILE_REQUIRED"
+        ]
+      },
+      "TaskSubmissionArchiveState": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "PENDING",
+          "ARCHIVED",
+          "FAILED"
+        ]
+      },
+      "TaskSubmissionBillingOperation": {
+        "type": "string",
+        "enum": [
+          "RESERVE",
+          "COMMIT",
+          "SETTLE",
+          "REFUND",
+          "ADJUST"
+        ]
+      },
+      "AdminTaskSubmissionView": {
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "updated_at",
+          "version",
+          "user_id",
+          "client_request_id",
+          "public_task_id",
+          "state",
+          "poll_state",
+          "billing_state",
+          "provider_cost_state",
+          "archive_state",
+          "provider",
+          "channel_id",
+          "channel_type",
+          "origin_model_name",
+          "reserved_quota",
+          "billing_source",
+          "send_attempts",
+          "poll_attempts"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 秒"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 秒"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "public_task_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskSubmissionState"
+          },
+          "poll_state": {
+            "$ref": "#/components/schemas/TaskSubmissionPollState"
+          },
+          "billing_state": {
+            "$ref": "#/components/schemas/TaskSubmissionBillingState"
+          },
+          "provider_cost_state": {
+            "$ref": "#/components/schemas/TaskSubmissionProviderCostState"
+          },
+          "archive_state": {
+            "$ref": "#/components/schemas/TaskSubmissionArchiveState"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "channel_id": {
+            "type": "integer"
+          },
+          "channel_type": {
+            "type": "integer",
+            "description": "wxmaas Seedance 渠道类型为 60。"
+          },
+          "origin_model_name": {
+            "type": "string"
+          },
+          "reserved_quota": {
+            "type": "integer"
+          },
+          "billing_source": {
+            "type": "string"
+          },
+          "provider_status": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "send_attempts": {
+            "type": "integer"
+          },
+          "poll_attempts": {
+            "type": "integer"
+          }
+        }
+      },
+      "TaskSubmissionBillingEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "submission_id",
+          "billing_request_id",
+          "operation",
+          "sequence",
+          "user_id",
+          "funding_source",
+          "funding_quota",
+          "token_quota",
+          "billing_state_before",
+          "billing_state_after",
+          "submission_version_before",
+          "submission_version_after",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "submission_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "billing_request_id": {
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/TaskSubmissionBillingOperation"
+          },
+          "sequence": {
+            "type": "integer"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "token_id": {
+            "type": "integer"
+          },
+          "subscription_id": {
+            "type": "integer"
+          },
+          "funding_source": {
+            "type": "string"
+          },
+          "funding_quota": {
+            "type": "integer"
+          },
+          "token_quota": {
+            "type": "integer"
+          },
+          "billing_state_before": {
+            "$ref": "#/components/schemas/TaskSubmissionBillingState"
+          },
+          "billing_state_after": {
+            "$ref": "#/components/schemas/TaskSubmissionBillingState"
+          },
+          "user_quota_before": {
+            "type": "integer"
+          },
+          "user_quota_after": {
+            "type": "integer"
+          },
+          "token_quota_before": {
+            "type": "integer"
+          },
+          "token_quota_after": {
+            "type": "integer"
+          },
+          "token_used_before": {
+            "type": "integer"
+          },
+          "token_used_after": {
+            "type": "integer"
+          },
+          "subscription_used_before": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subscription_used_after": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "submission_version_before": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "submission_version_after": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 秒"
+          }
+        }
+      },
+      "TaskSubmissionReconciliationReview": {
+        "type": "object",
+        "description": "对账审核的安全视图；原始 evidence 永不返回。",
+        "required": [
+          "id",
+          "expected_version",
+          "decision",
+          "admin_id",
+          "reason",
+          "evidence_recorded",
+          "strong_correlation",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "not_created",
+              "bind"
+            ]
+          },
+          "upstream_task_id": {
+            "type": "string"
+          },
+          "admin_id": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidence_recorded": {
+            "type": "boolean"
+          },
+          "provider_request_id": {
+            "type": "string"
+          },
+          "strong_correlation": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "REQUIRES_EVIDENCE",
+              "APPLIED",
+              "FAILED"
+            ]
+          },
+          "error_code": {
+            "type": "string"
+          },
+          "submission_version_after": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 秒"
+          }
+        }
+      },
+      "AdminTaskSubmissionDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AdminTaskSubmissionView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "billing_entries",
+              "reconciliation_reviews"
+            ],
+            "properties": {
+              "request_summary": {
+                "type": "string",
+                "description": "已脱敏的序列化 JSON 字符串。"
+              },
+              "public_price_snapshot": {
+                "type": "string",
+                "description": "已脱敏的序列化 JSON 字符串。"
+              },
+              "provider_cost_snapshot": {
+                "type": "string",
+                "description": "已脱敏的序列化 JSON 字符串。"
+              },
+              "upstream_task_id": {
+                "type": "string"
+              },
+              "provider_request_id": {
+                "type": "string"
+              },
+              "billing_entries": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TaskSubmissionBillingEntry"
+                }
+              },
+              "reconciliation_reviews": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TaskSubmissionReconciliationReview"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AdminTaskSubmissionPage": {
+        "type": "object",
+        "required": [
+          "page",
+          "page_size",
+          "total",
+          "items"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer"
+          },
+          "page_size": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminTaskSubmissionView"
+            }
+          }
+        }
+      },
+      "AdminTaskSubmissionListEnvelope": {
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AdminTaskSubmissionPage"
+          }
+        }
+      },
+      "AdminTaskSubmissionDetailEnvelope": {
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AdminTaskSubmissionDetail"
+          }
+        }
+      },
+      "AdminTaskSubmissionReconcileRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_version",
+          "decision",
+          "evidence",
+          "reason"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "not_created",
+              "bind"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "结构化供应商 evidence；仅记录摘要状态，不在详情接口回传原文。"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "upstream_task_id": {
+            "type": "string"
+          },
+          "provider_request_id": {
+            "type": "string"
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "upstream_task_id"
+            ],
+            "properties": {
+              "decision": {
+                "enum": [
+                  "bind"
+                ]
+              },
+              "upstream_task_id": {
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "not_created"
+                ]
+              },
+              "upstream_task_id": {
+                "maxLength": 0
+              }
+            }
+          }
+        ]
+      },
+      "AdminTaskSubmissionReconcileEnvelope": {
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "pending_review",
+              "reviewer_count",
+              "submission"
+            ],
+            "properties": {
+              "pending_review": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              },
+              "reviewer_count": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "submission": {
+                "$ref": "#/components/schemas/AdminTaskSubmissionView"
+              }
+            }
+          }
+        }
+      },
+      "AdminTaskSubmissionPendingReviewEnvelope": {
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "pending_review",
+                  "requires_evidence"
+                ],
+                "properties": {
+                  "pending_review": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  },
+                  "requires_evidence": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "pending_review",
+                  "reviewer_count"
+                ],
+                "properties": {
+                  "pending_review": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  },
+                  "reviewer_count": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "AdminAPIError": {
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
         }
       },
       "PageInfo": {

@@ -37,6 +37,8 @@ type TaskPollingAdaptor interface {
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 
+const maxSD2LedgerPollResponseBytes int64 = 1 << 20
+
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
@@ -57,6 +59,18 @@ func sweepTimedOutTasks(ctx context.Context) {
 	timedOutCount := 0
 
 	for _, task := range tasks {
+		link, linked, lookupErr := lookupSD2LedgerTask(ctx, task.ID)
+		if lookupErr != nil {
+			logger.LogError(ctx, fmt.Sprintf("sweepTimedOutTasks: cannot resolve ledger link for task %s: %v", task.TaskID, lookupErr))
+			continue
+		}
+		if linked {
+			if err := markSD2LedgerPollIssue(ctx, task, link, "STALE", "local_task_timeout"); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("sweepTimedOutTasks: cannot mark ledger task %s stale: %v", task.TaskID, err))
+			}
+			continue
+		}
+
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < legacyTaskCutoff
 
 		oldStatus := task.Status
@@ -138,14 +152,37 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 		taskM := make(map[string]*model.Task)
 		nullTaskIds := make([]int64, 0)
 		for _, task := range tasks {
+			link, linked, lookupErr := lookupSD2LedgerTask(ctx, task.ID)
+			if lookupErr != nil {
+				logger.LogError(ctx, fmt.Sprintf("Cannot resolve ledger link for task %s: %v", task.TaskID, lookupErr))
+				continue
+			}
+			if linked {
+				if link.PollState == "TERMINAL" || (link.NextPollAt > 0 && link.NextPollAt > time.Now().Unix()) {
+					continue
+				}
+				if task.PrivateData.UpstreamTaskID == "" || task.PrivateData.UpstreamTaskID != link.UpstreamTaskID {
+					if markErr := markSD2LedgerPollIssue(ctx, task, link, "PAUSED_CREDENTIAL", "upstream_task_binding_invalid"); markErr != nil {
+						logger.LogError(ctx, fmt.Sprintf("Cannot pause ledger task %s with invalid upstream binding: %v", task.TaskID, markErr))
+					}
+					continue
+				}
+			}
 			upstreamID := task.GetUpstreamTaskID()
 			if upstreamID == "" {
 				// 统计失败的未完成任务
 				nullTaskIds = append(nullTaskIds, task.ID)
 				continue
 			}
-			taskM[upstreamID] = task
-			taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], upstreamID)
+			pollKey := upstreamID
+			if linked {
+				// Provider task IDs are only unique inside a channel/account. Use the
+				// globally unique public ID for the in-memory poll map so identical
+				// upstream IDs on two channels cannot cross-bind tasks.
+				pollKey = "ledger:" + task.TaskID
+			}
+			taskM[pollKey] = task
+			taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], pollKey)
 		}
 		if len(nullTaskIds) > 0 {
 			summary.NullTasksFailed += len(nullTaskIds)
@@ -379,20 +416,35 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
-		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
+		// Ledger-managed tasks keep their public state and billing reservation when
+		// channel configuration is temporarily unavailable. Legacy tasks retain the
+		// historical behavior until they are migrated.
 		var failedIDs []int64
 		for _, upstreamID := range taskIds {
 			if t, ok := taskM[upstreamID]; ok {
+				link, linked, lookupErr := lookupSD2LedgerTask(ctx, t.ID)
+				if lookupErr != nil {
+					logger.LogError(ctx, fmt.Sprintf("Cannot resolve ledger link for task %s after channel lookup failure: %v", t.TaskID, lookupErr))
+					continue
+				}
+				if linked {
+					if markErr := markSD2LedgerPollIssue(ctx, t, link, "PAUSED_CREDENTIAL", "channel_unavailable"); markErr != nil {
+						logger.LogError(ctx, fmt.Sprintf("Cannot pause ledger task %s after channel lookup failure: %v", t.TaskID, markErr))
+					}
+					continue
+				}
 				failedIDs = append(failedIDs, t.ID)
 			}
 		}
-		errUpdate := model.TaskBulkUpdateByID(failedIDs, map[string]any{
-			"fail_reason": fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId),
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
-		if errUpdate != nil {
-			common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", errUpdate))
+		if len(failedIDs) > 0 {
+			errUpdate := model.TaskBulkUpdateByID(failedIDs, map[string]any{
+				"fail_reason": fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId),
+				"status":      "FAILURE",
+				"progress":    "100%",
+			})
+			if errUpdate != nil {
+				common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", errUpdate))
+			}
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
@@ -412,7 +464,11 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 			return ctx.Err()
 		}
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
-			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
+			publicTaskID := "unknown"
+			if task := taskM[taskId]; task != nil {
+				publicTaskID = task.TaskID
+			}
+			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", publicTaskID, err.Error()))
 		}
 		if disablePollingSleep || i == len(taskIds)-1 {
 			continue
@@ -440,13 +496,45 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	task := taskM[taskId]
 	if task == nil {
-		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
-		return fmt.Errorf("task %s not found", taskId)
+		logger.LogError(ctx, "Video task not found in polling task map")
+		return fmt.Errorf("video task not found in polling task map")
+	}
+	sensitiveSD2Polling := ch.Type == constant.ChannelTypeJDSeedance || ch.Type == constant.ChannelTypeWxmaasSeedance
+	ledgerLink, ledgerLinked, err := lookupSD2LedgerTask(ctx, task.ID)
+	if err != nil {
+		return fmt.Errorf("resolve sd2 ledger link for task %s: %w", task.TaskID, err)
+	}
+	if ledgerLinked && (task.PrivateData.UpstreamTaskID == "" || task.PrivateData.UpstreamTaskID != ledgerLink.UpstreamTaskID) {
+		if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "PAUSED_CREDENTIAL", "upstream_task_binding_invalid"); markErr != nil {
+			return fmt.Errorf("invalid upstream binding and ledger update failed for task %s: %w", task.TaskID, markErr)
+		}
+		return fmt.Errorf("invalid upstream binding for ledger task %s", task.TaskID)
+	}
+	if ledgerLinked {
+		if safeCode := validateSD2LedgerChannelBinding(ledgerLink, ch); safeCode != "" {
+			if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "PAUSED_CREDENTIAL", safeCode); markErr != nil {
+				return fmt.Errorf("invalid channel binding and ledger update failed for task %s: %w", task.TaskID, markErr)
+			}
+			return fmt.Errorf("invalid channel binding for ledger task %s", task.TaskID)
+		}
+		if ch.Type == constant.ChannelTypeWxmaasSeedance {
+			pollAllowed, safetyErr := WxmaasChannelPollingAllowed(ch)
+			if safetyErr != nil || !pollAllowed {
+				safeCode := "channel_poll_disabled"
+				if safetyErr != nil {
+					safeCode = "channel_safety_config_invalid"
+				}
+				if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "PAUSED_CREDENTIAL", safeCode); markErr != nil {
+					return fmt.Errorf("poll safety gate and ledger update failed for task %s: %w", task.TaskID, markErr)
+				}
+				return fmt.Errorf("poll safety gate rejected ledger task %s", task.TaskID)
+			}
+		}
 	}
 	key := ch.Key
 
 	privateData := task.PrivateData
-	if privateData.Key != "" {
+	if !ledgerLinked && privateData.Key != "" {
 		key = privateData.Key
 	}
 	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
@@ -454,28 +542,88 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		"action":  task.Action,
 	}, proxy)
 	if err != nil {
-		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
+		if ledgerLinked {
+			if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "BACKOFF", "provider_query_transport_error"); markErr != nil {
+				return fmt.Errorf("provider query transport error and ledger update failed for task %s: %w", task.TaskID, markErr)
+			}
+			return fmt.Errorf("provider query transport error for ledger task %s", task.TaskID)
+		}
+		return fmt.Errorf("fetchTask failed for task %s: %w", task.TaskID, err)
+	}
+	if resp == nil || resp.Body == nil {
+		if ledgerLinked {
+			if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "BACKOFF", "provider_query_transport_error"); markErr != nil {
+				return fmt.Errorf("empty provider query response and ledger update failed for task %s: %w", task.TaskID, markErr)
+			}
+			return fmt.Errorf("empty provider query response for ledger task %s", task.TaskID)
+		}
+		return fmt.Errorf("empty provider query response for task %s", task.TaskID)
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	if ledgerLinked && resp.StatusCode != http.StatusOK {
+		pollState, safeCode := classifySD2PollHTTPFailure(resp.StatusCode)
+		if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, pollState, safeCode); markErr != nil {
+			return fmt.Errorf("provider query status %d and ledger update failed for task %s: %w", resp.StatusCode, task.TaskID, markErr)
+		}
+		return fmt.Errorf("provider query returned status %d for ledger task %s", resp.StatusCode, task.TaskID)
+	}
+	responseReader := io.Reader(resp.Body)
+	boundedSD2Polling := ledgerLinked || sensitiveSD2Polling
+	if boundedSD2Polling {
+		responseReader = io.LimitReader(resp.Body, maxSD2LedgerPollResponseBytes+1)
+	}
+	responseBody, err := io.ReadAll(responseReader)
 	if err != nil {
-		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
+		if ledgerLinked {
+			if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "BACKOFF", "provider_query_read_error"); markErr != nil {
+				return fmt.Errorf("provider query read error and ledger update failed for task %s: %w", task.TaskID, markErr)
+			}
+			return fmt.Errorf("provider query read error for ledger task %s", task.TaskID)
+		}
+		return fmt.Errorf("readAll failed for task %s: %w", task.TaskID, err)
+	}
+	if boundedSD2Polling && int64(len(responseBody)) > maxSD2LedgerPollResponseBytes {
+		if ledgerLinked {
+			if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "BACKOFF", "provider_query_response_too_large"); markErr != nil {
+				return fmt.Errorf("provider query response too large and ledger update failed for task %s: %w", task.TaskID, markErr)
+			}
+		}
+		return fmt.Errorf("provider query response too large for SD2 task %s", task.TaskID)
 	}
 
-	if ch.Type == constant.ChannelTypeJDSeedance {
-		logger.LogInfo(ctx, fmt.Sprintf("JD Seedance query response: status=%d local_task_id=%s upstream_task_id=%s body=%s",
-			resp.StatusCode, task.TaskID, task.GetUpstreamTaskID(), responseBody))
+	if ledgerLinked {
+		logger.LogDebug(ctx, "Ledger video query response received: status=%d local_task_id=%s", resp.StatusCode, task.TaskID)
 	} else {
-		logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
+		logVideoPollingResponse(ctx, sensitiveSD2Polling, resp.StatusCode, task.TaskID, responseBody)
+	}
+
+	taskResult := &relaycommon.TaskInfo{}
+	if ledgerLinked {
+		taskResult, err = adaptor.ParseTaskResult(responseBody)
+		if err != nil || taskResult == nil {
+			if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "BACKOFF", "provider_query_parse_error"); markErr != nil {
+				return fmt.Errorf("provider query parse error and ledger update failed for task %s: %w", task.TaskID, markErr)
+			}
+			return fmt.Errorf("provider query parse error for ledger task %s", task.TaskID)
+		}
+		if taskResult.TaskID == "" || taskResult.TaskID != ledgerLink.UpstreamTaskID {
+			if markErr := markSD2LedgerPollIssue(ctx, task, ledgerLink, "BACKOFF", "provider_task_id_mismatch"); markErr != nil {
+				return fmt.Errorf("provider task binding mismatch and ledger update failed for task %s: %w", task.TaskID, markErr)
+			}
+			return fmt.Errorf("provider task binding mismatch for ledger task %s", task.TaskID)
+		}
+		if taskResult.Status == "" {
+			return markSD2LedgerPollIssue(ctx, task, ledgerLink, "BACKOFF", "provider_status_missing")
+		}
+		return handleSD2LedgerTaskResult(ctx, task, ledgerLink, taskResult)
 	}
 
 	snap := task.Snapshot()
 
-	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
 	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
-		logger.LogDebug(ctx, "updateVideoSingleTask parsed as new api response format: %+v", responseItems)
+		logVideoPollingParsed(ctx, sensitiveSD2Polling, task.TaskID, "new_api_response", responseItems)
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
 		taskResult.Status = string(t.Status)
@@ -484,12 +632,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.Reason = t.FailReason
 		task.Data = t.Data
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
-		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+		return fmt.Errorf("parseTaskResult failed for task %s: %w", task.TaskID, err)
 	}
 
 	task.Data = redactVideoResponseBody(responseBody)
 
-	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
+	logVideoPollingParsed(ctx, sensitiveSD2Polling, task.TaskID, "task_result", taskResult)
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {
@@ -508,7 +656,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 				taskResult = relaycommon.FailTaskInfo("upstream returned error")
 			} else {
 				// unknown error format, log original response
-				logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
+				logVideoPollingUnrecognized(ctx, sensitiveSD2Polling, task.TaskID, responseBody)
 				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
 			}
 		}
@@ -546,14 +694,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 		shouldSettle = true
 	case model.TaskStatusFailure:
-		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
 		task.FailReason = taskResult.Reason
-		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
+		logVideoPollingFailure(ctx, sensitiveSD2Polling, task, task.FailReason)
 		taskResult.Progress = taskcommon.ProgressComplete
 		if quota != 0 {
 			shouldRefund = true
@@ -594,6 +741,60 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+func logVideoPollingResponse(ctx context.Context, sensitive bool, status int, localTaskID string, responseBody []byte) {
+	if sensitive {
+		logger.LogInfo(ctx, fmt.Sprintf("SD2 provider query response: status=%d local_task_id=%s", status, localTaskID))
+		return
+	}
+	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
+}
+
+func logVideoPollingParsed(ctx context.Context, sensitive bool, localTaskID string, stage string, payload any) {
+	if sensitive {
+		logger.LogDebug(ctx, "SD2 provider query parsed: stage=%s local_task_id=%s", stage, localTaskID)
+		return
+	}
+	logger.LogDebug(ctx, "updateVideoSingleTask %s: %+v", stage, payload)
+}
+
+func logVideoPollingUnrecognized(ctx context.Context, sensitive bool, localTaskID string, responseBody []byte) {
+	if sensitive {
+		logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with an unrecognized provider response", localTaskID))
+		return
+	}
+	logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", localTaskID, string(responseBody)))
+}
+
+func logVideoPollingFailure(ctx context.Context, sensitive bool, task *model.Task, reason string) {
+	if task == nil {
+		return
+	}
+	if sensitive {
+		logger.LogInfo(ctx, fmt.Sprintf("SD2 task %s failed: provider_failure", task.TaskID))
+		return
+	}
+	logger.LogJson(ctx, fmt.Sprintf("Task %s failed", task.TaskID), task)
+	logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, reason))
+}
+
+func classifySD2PollHTTPFailure(statusCode int) (string, string) {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "PAUSED_CREDENTIAL", "provider_query_auth_error"
+	case http.StatusNotFound:
+		return "BACKOFF", "provider_query_not_found"
+	case http.StatusRequestTimeout:
+		return "BACKOFF", "provider_query_timeout"
+	case http.StatusTooManyRequests:
+		return "BACKOFF", "provider_query_rate_limited"
+	default:
+		if statusCode >= http.StatusInternalServerError {
+			return "BACKOFF", "provider_query_server_error"
+		}
+		return "BACKOFF", "provider_query_http_error"
+	}
 }
 
 func redactVideoResponseBody(body []byte) []byte {

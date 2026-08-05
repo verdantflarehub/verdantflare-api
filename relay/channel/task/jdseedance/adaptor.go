@@ -2,6 +2,7 @@ package jdseedance
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,9 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -27,6 +26,11 @@ type TaskAdaptor struct {
 	apiKey      string
 	baseURL     string
 }
+
+const (
+	maxCreateResponseBytes = 1 << 20
+	providerQueryTimeout   = 30 * time.Second
+)
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
@@ -83,20 +87,53 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
-	return channel.DoTaskApiRequest(a, c, info, requestBody)
+	requestURL, err := a.BuildRequestURL(info)
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("new request failed: %w", err)
+	}
+	if err := a.BuildRequestHeader(c, req, info); err != nil {
+		return nil, fmt.Errorf("setup request header failed: %w", err)
+	}
+	proxy := ""
+	if info != nil && info.ChannelMeta != nil {
+		proxy = info.ChannelSetting.Proxy
+	}
+	client, err := jdProviderHTTPClient(proxy)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("provider create request failed")
+	}
+	if c != nil {
+		if upstreamRequestID := strings.TrimSpace(resp.Header.Get(common.RequestIdKey)); upstreamRequestID != "" {
+			c.Set(common.UpstreamRequestIdKey, upstreamRequestID)
+		}
+	}
+	return resp, nil
 }
 
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxCreateResponseBytes+1))
 	if err != nil {
-		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+		return "", nil, service.TaskErrorWrapper(errors.New("provider create response could not be read"), "read_response_body_failed", http.StatusBadGateway)
 	}
 	_ = resp.Body.Close()
-	logger.LogInfo(c, fmt.Sprintf("JD Seedance create response: status=%d local_task_id=%s body=%s", resp.StatusCode, info.PublicTaskID, responseBody))
-
+	if len(responseBody) > maxCreateResponseBytes {
+		return "", nil, service.TaskErrorWrapper(errors.New("provider create response is too large"), "invalid_response", http.StatusBadGateway)
+	}
 	var jdResp createResponse
 	if err := common.Unmarshal(responseBody, &jdResp); err != nil {
-		return "", responseBody, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusBadGateway)
+		return "", nil, service.TaskErrorWrapper(errors.New("provider create response is invalid"), "unmarshal_response_body_failed", http.StatusBadGateway)
 	}
 	if strings.TrimSpace(jdResp.ErrorCode) != "" {
 		if strings.HasPrefix(strings.TrimSpace(jdResp.ErrorCode), "InputImageSensitiveContentDetected") {
@@ -123,13 +160,6 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if upstreamTaskID == "" {
 		return "", responseBody, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusBadGateway)
 	}
-
-	video := dto.NewOpenAIVideo()
-	video.ID = info.PublicTaskID
-	video.TaskID = info.PublicTaskID
-	video.CreatedAt = time.Now().Unix()
-	video.Model = info.OriginModelName
-	c.JSON(http.StatusOK, video)
 
 	return upstreamTaskID, responseBody, nil
 }
@@ -160,14 +190,29 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
-	client, err := service.GetHttpClientWithProxy(proxy)
+	client, err := jdProviderHTTPClient(proxy)
 	if err != nil {
-		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+		return nil, err
 	}
-	if client == nil {
-		client = http.DefaultClient
+	if client.Timeout <= 0 || client.Timeout > providerQueryTimeout {
+		client.Timeout = providerQueryTimeout
 	}
 	return client.Do(req)
+}
+
+func jdProviderHTTPClient(proxy string) (*http.Client, error) {
+	baseClient, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("provider HTTP client configuration failed")
+	}
+	if baseClient == nil {
+		baseClient = http.DefaultClient
+	}
+	client := *baseClient
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &client, nil
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
@@ -190,11 +235,26 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if err := common.Unmarshal(resp.Data, &data); err != nil {
 		return nil, errors.Wrap(err, "unmarshal query data failed")
 	}
+	if strings.TrimSpace(data.Resolution) != "" && !strings.EqualFold(strings.TrimSpace(data.Resolution), "720P") {
+		return nil, fmt.Errorf("query response has unexpected resolution")
+	}
 
 	taskInfo := &relaycommon.TaskInfo{
-		Code:   0,
-		TaskID: firstNonEmpty(data.ID, data.TaskID, data.TaskIDSnake),
+		Code:              0,
+		TaskID:            firstNonEmpty(data.ID, data.TaskID, data.TaskIDSnake),
+		Resolution:        strings.TrimSpace(data.Resolution),
+		Duration:          data.Duration,
+		Ratio:             strings.TrimSpace(data.Ratio),
+		FramesPerSecond:   data.FramesPerSecond,
+		ProviderCreatedAt: data.CreatedAt,
+		ProviderUpdatedAt: data.UpdatedAt,
 	}
+	if data.Seed != nil {
+		seed := int64(*data.Seed)
+		taskInfo.Seed = &seed
+	}
+	generateAudio := data.GenerateAudio
+	taskInfo.GenerateAudio = &generateAudio
 
 	switch strings.ToLower(strings.TrimSpace(firstNonEmpty(data.Status, data.State))) {
 	case "pending", "queued", "submitted":
@@ -211,13 +271,20 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskInfo.CompletionTokens = data.Usage.CompletionTokens
 			taskInfo.TotalTokens = data.Usage.TotalTokens
 		}
-	case "failed", "failure", "canceled", "cancelled":
+	case "failed", "failure":
 		taskInfo.Status = model.TaskStatusFailure
 		taskInfo.Progress = taskcommon.ProgressComplete
 		taskInfo.Reason = failureReason(resp.Msg, data)
+	case "canceled", "cancelled":
+		taskInfo.Status = model.TaskStatusUnknown
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = "provider_cancelled"
+	case "expired":
+		taskInfo.Status = model.TaskStatusUnknown
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = "provider_expired"
 	default:
-		taskInfo.Status = model.TaskStatusInProgress
-		taskInfo.Progress = taskcommon.ProgressInProgress
+		return nil, fmt.Errorf("query response has unknown provider status")
 	}
 
 	return taskInfo, nil

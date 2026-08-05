@@ -775,27 +775,33 @@ export const getChannelsColumns = ({
 
           return (
             <Space wrap>
-              <SplitButtonGroup
-                className='overflow-hidden'
-                aria-label={t('测试单个渠道操作项目组')}
-              >
-                <Button
-                  size='small'
-                  type='tertiary'
-                  onClick={() => testChannel(record, '')}
+              {record.type === 60 ? (
+                <Tag color='amber' type='light'>
+                  {t('付费视频渠道不提供创建测试')}
+                </Tag>
+              ) : (
+                <SplitButtonGroup
+                  className='overflow-hidden'
+                  aria-label={t('测试单个渠道操作项目组')}
                 >
-                  {t('测试')}
-                </Button>
-                <Button
-                  size='small'
-                  type='tertiary'
-                  icon={<IconTreeTriangleDown />}
-                  onClick={() => {
-                    setCurrentTestChannel(record);
-                    setShowModelTestModal(true);
-                  }}
-                />
-              </SplitButtonGroup>
+                  <Button
+                    size='small'
+                    type='tertiary'
+                    onClick={() => testChannel(record, '')}
+                  >
+                    {t('测试')}
+                  </Button>
+                  <Button
+                    size='small'
+                    type='tertiary'
+                    icon={<IconTreeTriangleDown />}
+                    onClick={() => {
+                      setCurrentTestChannel(record);
+                      setShowModelTestModal(true);
+                    }}
+                  />
+                </SplitButtonGroup>
+              )}
 
               {record.status === 1 ? (
                 <Button

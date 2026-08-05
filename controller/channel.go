@@ -17,6 +17,7 @@ import (
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
+	"github.com/QuantumNous/new-api/relay/channel/task/wxmaasseedance"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 
@@ -469,6 +470,11 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
 	}
+	if channel.Type == constant.ChannelTypeWxmaasSeedance {
+		if err := normalizeAndValidateWxmaasChannel(channel); err != nil {
+			return err
+		}
+	}
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
@@ -521,6 +527,74 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	}
 
 	return nil
+}
+
+func normalizeAndValidateWxmaasChannel(channel *model.Channel) error {
+	if channel.ChannelInfo.IsMultiKey {
+		return fmt.Errorf("wxmaas Seedance does not support multi-key channels")
+	}
+	if key := strings.TrimSpace(channel.Key); key != "" {
+		if strings.ContainsAny(key, "\r\n") || strings.HasPrefix(key, "[") {
+			return fmt.Errorf("wxmaas Seedance requires exactly one channel key")
+		}
+		channel.Key = key
+	}
+
+	baseURL := channel.GetBaseURL()
+	if baseURL == "" {
+		baseURL = wxmaasseedance.DefaultBaseURL
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL != wxmaasseedance.DefaultBaseURL {
+		return fmt.Errorf("wxmaas Seedance base URL must be %s", wxmaasseedance.DefaultBaseURL)
+	}
+	channel.BaseURL = &baseURL
+
+	models := channel.GetModels()
+	if len(models) == 0 {
+		channel.Models = wxmaasseedance.PublicModel
+	} else {
+		if len(models) != 1 || strings.TrimSpace(models[0]) != wxmaasseedance.PublicModel {
+			return fmt.Errorf("wxmaas Seedance models must be %s", wxmaasseedance.PublicModel)
+		}
+		channel.Models = wxmaasseedance.PublicModel
+	}
+
+	mappingJSON := strings.TrimSpace(channel.GetModelMapping())
+	if mappingJSON == "" {
+		mappingJSON = wxmaasseedance.DefaultModelMapping
+	}
+	var mapping map[string]string
+	if err := common.Unmarshal([]byte(mappingJSON), &mapping); err != nil {
+		return fmt.Errorf("wxmaas Seedance model mapping must be valid JSON")
+	}
+	if len(mapping) != 1 || mapping[wxmaasseedance.PublicModel] != wxmaasseedance.UpstreamModel {
+		return fmt.Errorf("wxmaas Seedance model mapping must map %s to %s", wxmaasseedance.PublicModel, wxmaasseedance.UpstreamModel)
+	}
+	mappingJSON = wxmaasseedance.DefaultModelMapping
+	channel.ModelMapping = &mappingJSON
+	if _, err := service.ParseWxmaasChannelSafetySettings(channel); err != nil {
+		return err
+	}
+	return nil
+}
+
+func normalizeAndValidateWxmaasChannelUpdate(channel, originChannel *model.Channel) error {
+	if channel == nil || originChannel == nil {
+		return fmt.Errorf("channel is required")
+	}
+	effectiveChannelType := channel.Type
+	if effectiveChannelType == constant.ChannelTypeUnknown {
+		effectiveChannelType = originChannel.Type
+	}
+	if effectiveChannelType != constant.ChannelTypeWxmaasSeedance {
+		return nil
+	}
+	channel.Type = effectiveChannelType
+	if channel.Setting == nil {
+		channel.Setting = originChannel.Setting
+	}
+	return normalizeAndValidateWxmaasChannel(channel)
 }
 
 func RefreshCodexChannelCredential(c *gin.Context) {
@@ -607,6 +681,13 @@ func AddChannel(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": err.Error(),
+		})
+		return
+	}
+	if addChannelRequest.Channel.Type == constant.ChannelTypeWxmaasSeedance && addChannelRequest.Mode != "single" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "wxmaas Seedance channels must be added in single-key mode",
 		})
 		return
 	}
@@ -934,14 +1015,6 @@ func UpdateChannel(c *gin.Context) {
 	}
 	clearChannelReadOnlyFields(&channel, requestData)
 
-	// 使用统一的校验函数
-	if err := validateChannel(&channel.Channel, false); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
@@ -954,6 +1027,22 @@ func UpdateChannel(c *gin.Context) {
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
+	if err := normalizeAndValidateWxmaasChannelUpdate(&channel.Channel, originChannel); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	// Validate after merging persisted channel context. This preserves omitted
+	// wxmaas safety settings while still keeping the backend authoritative.
+	if err := validateChannel(&channel.Channel, false); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 
 	if channelHasSensitiveChanges(&channel, originChannel, requestData) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite) {

@@ -1,10 +1,12 @@
 package jdseedance
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -65,6 +67,46 @@ func TestNormalizeSubmitRequestFromMessages(t *testing.T) {
 	require.Equal(t, contentTypeAudioURL, createReq.Content[1].Type)
 	require.Equal(t, "https://example.com/input.mp3", createReq.Content[1].AudioURL.URL)
 	require.Equal(t, contentTypeText, createReq.Content[2].Type)
+}
+
+func TestNormalizeSubmitRequestKeepsPromptFirstAndLegacyAudio(t *testing.T) {
+	req := submitRequest{
+		Model:    ModelJDSeedanceSD,
+		Prompt:   "先看提示词",
+		Image:    "https://example.com/image.png",
+		Audio:    "https://example.com/audio.mp3",
+		Duration: 10,
+	}
+	taskReq, err := normalizeSubmitRequest(req)
+	require.NoError(t, err)
+	createReq, err := convertToCreateRequest(taskReq)
+	require.NoError(t, err)
+	require.Len(t, createReq.Content, 3)
+	require.Equal(t, contentTypeText, createReq.Content[0].Type)
+	require.Equal(t, contentTypeImageURL, createReq.Content[1].Type)
+	require.Equal(t, contentTypeAudioURL, createReq.Content[2].Type)
+}
+
+func TestNormalizeSubmitRequestRejectsConflictingDurationAliases(t *testing.T) {
+	_, err := normalizeSubmitRequest(submitRequest{
+		Model:    ModelJDSeedanceSD,
+		Prompt:   "x",
+		Duration: 10,
+		Seconds:  "5",
+	})
+	require.EqualError(t, err, "duration and seconds must describe the same value")
+
+	taskReq, err := normalizeSubmitRequest(submitRequest{
+		Model:    ModelJDSeedanceSD,
+		Prompt:   "x",
+		Duration: 10,
+		Seconds:  "10",
+		Metadata: map[string]any{"duration": "10", "seconds": 10},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 10, taskReq.Duration)
+	require.Equal(t, 10, taskReq.Metadata["duration"])
+	require.NotContains(t, taskReq.Metadata, "seconds")
 }
 
 func TestNormalizeSubmitRequestPreservesThreeVideoReferences(t *testing.T) {
@@ -267,7 +309,7 @@ func TestNormalizeSubmitRequestFromPromptAndMetadataContent(t *testing.T) {
 	require.Equal(t, "第一人称视角果茶宣传广告", createReq.Content[0].Text)
 }
 
-func TestDoResponseReturnsPublicTaskIDAndStoresUpstreamID(t *testing.T) {
+func TestDoResponseReturnsParsedResultWithoutWritingClientResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -285,8 +327,32 @@ func TestDoResponseReturnsPublicTaskIDAndStoresUpstreamID(t *testing.T) {
 	require.Nil(t, taskErr)
 	require.Equal(t, "jd_task_123", taskID)
 	require.JSONEq(t, `{"code":1,"data":"jd_task_123","msg":"success"}`, string(taskData))
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Contains(t, recorder.Body.String(), `"id":"task_local"`)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestDoResponseBoundsAndRedactsInvalidProviderBody(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader(strings.Repeat("x", maxCreateResponseBytes+1)))}
+	_, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, &relaycommon.RelayInfo{})
+	require.NotNil(t, taskErr)
+	require.Nil(t, taskData)
+	require.NotContains(t, taskErr.Message, strings.Repeat("x", 32))
+
+	resp = &http.Response{Body: io.NopCloser(strings.NewReader(`{"secret_url":"https://example.com/video.mp4?token=secret"`))}
+	_, taskData, taskErr = (&TaskAdaptor{}).DoResponse(c, resp, &relaycommon.RelayInfo{})
+	require.NotNil(t, taskErr)
+	require.Nil(t, taskData)
+	require.NotContains(t, taskErr.Message, "secret")
+}
+
+func TestParseTaskResultRejectsUnknownStatusAndNon720P(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	_, err := adaptor.ParseTaskResult([]byte(`{"code":0,"data":{"id":"provider-task","status":"mystery","resolution":"720P"}}`))
+	require.ErrorContains(t, err, "unknown provider status")
+
+	_, err = adaptor.ParseTaskResult([]byte(`{"code":0,"data":{"id":"provider-task","status":"running","resolution":"1080P"}}`))
+	require.ErrorContains(t, err, "unexpected resolution")
 }
 
 func TestDoResponseAcceptsZeroCodeSuccessWithObjectTaskID(t *testing.T) {
@@ -307,8 +373,8 @@ func TestDoResponseAcceptsZeroCodeSuccessWithObjectTaskID(t *testing.T) {
 	require.Nil(t, taskErr)
 	require.Equal(t, "jd_task_456", taskID)
 	require.JSONEq(t, `{"code":0,"data":{"taskId":"jd_task_456"},"msg":"成功"}`, string(taskData))
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Contains(t, recorder.Body.String(), `"id":"task_local"`)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
 }
 
 func TestDoResponseAcceptsNestedSnakeTaskID(t *testing.T) {
@@ -424,6 +490,40 @@ func TestFetchTaskPostsDanceQuery(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestCreateAndQueryNeverFollowProviderRedirects(t *testing.T) {
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var destinationHits atomic.Int32
+			destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				destinationHits.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer destination.Close()
+
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Location", destination.URL)
+				w.WriteHeader(status)
+			}))
+			defer source.Close()
+
+			gin.SetMode(gin.TestMode)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", nil)
+			adaptor := &TaskAdaptor{apiKey: "jd-key", baseURL: source.URL}
+			createResp, err := adaptor.DoRequest(c, &relaycommon.RelayInfo{}, strings.NewReader(`{"content":[]}`))
+			require.NoError(t, err)
+			require.Equal(t, status, createResp.StatusCode)
+			require.NoError(t, createResp.Body.Close())
+
+			queryResp, err := adaptor.FetchTask(source.URL, "jd-key", map[string]any{"task_id": "jd_task_123"}, "")
+			require.NoError(t, err)
+			require.Equal(t, status, queryResp.StatusCode)
+			require.NoError(t, queryResp.Body.Close())
+			require.Zero(t, destinationHits.Load())
+		})
+	}
+}
+
 func TestParseTaskResultStatusAndURL(t *testing.T) {
 	taskInfo, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
 		"code": 1,
@@ -434,6 +534,10 @@ func TestParseTaskResultStatusAndURL(t *testing.T) {
 			"content": "https://example.com/result.mp4",
 			"ratio": "16:9",
 			"duration": 11,
+			"resolution": "720p",
+			"framespersecond": 30,
+			"seed": 42,
+			"generate_audio": false,
 			"usage": {"completion_tokens": 108900, "total_tokens": 108900}
 		},
 		"msg": "success"
@@ -444,6 +548,14 @@ func TestParseTaskResultStatusAndURL(t *testing.T) {
 	require.Equal(t, "https://example.com/result.mp4", taskInfo.Url)
 	require.Equal(t, 108900, taskInfo.CompletionTokens)
 	require.Equal(t, 108900, taskInfo.TotalTokens)
+	require.Equal(t, "720p", taskInfo.Resolution)
+	require.Equal(t, 11, taskInfo.Duration)
+	require.Equal(t, "16:9", taskInfo.Ratio)
+	require.Equal(t, 30, taskInfo.FramesPerSecond)
+	require.NotNil(t, taskInfo.Seed)
+	require.Equal(t, int64(42), *taskInfo.Seed)
+	require.NotNil(t, taskInfo.GenerateAudio)
+	require.False(t, *taskInfo.GenerateAudio)
 
 	taskInfo, err = (&TaskAdaptor{}).ParseTaskResult([]byte(`{
 		"code": 0,
@@ -493,6 +605,16 @@ func TestParseTaskResultStatusAndURL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "FAILURE", taskInfo.Status)
 	require.Equal(t, "bad input", taskInfo.Reason)
+
+	for status, reason := range map[string]string{
+		"cancelled": "provider_cancelled",
+		"expired":   "provider_expired",
+	} {
+		taskInfo, err = (&TaskAdaptor{}).ParseTaskResult([]byte(fmt.Sprintf(`{"code":1,"data":{"id":"jd_task_123","status":%q},"msg":"success"}`, status)))
+		require.NoError(t, err)
+		require.Equal(t, "UNKNOWN", taskInfo.Status)
+		require.Equal(t, reason, taskInfo.Reason)
+	}
 }
 
 func TestConvertToOpenAIVideoIncludesResultMetadata(t *testing.T) {

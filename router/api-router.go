@@ -328,6 +328,14 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
 		}
 
+		taskSubmissionRoute := apiRouter.Group("/task-submissions")
+		taskSubmissionRoute.Use(middleware.AdminAuth())
+		{
+			taskSubmissionRoute.GET("", controller.AdminListTaskSubmissions)
+			taskSubmissionRoute.GET("/:id", controller.AdminGetTaskSubmission)
+			taskSubmissionRoute.POST("/:id/reconcile", middleware.RootAuth(), controller.AdminReconcileTaskSubmission)
+		}
+
 		vendorRoute := apiRouter.Group("/vendors")
 		vendorRoute.Use(middleware.AdminAuth())
 		{

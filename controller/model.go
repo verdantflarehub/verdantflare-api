@@ -111,7 +111,7 @@ func init() {
 }
 
 func channelOwnerName(channelType int) string {
-	if channelType == constant.ChannelTypeJDSeedance {
+	if channelType == constant.ChannelTypeJDSeedance || channelType == constant.ChannelTypeWxmaasSeedance {
 		return "verdantflare"
 	}
 	apiType, success := common.ChannelType2APIType(channelType)

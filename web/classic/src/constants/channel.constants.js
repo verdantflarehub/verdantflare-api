@@ -180,6 +180,11 @@ export const CHANNEL_OPTIONS = [
     label: '京东 Seedance',
   },
   {
+    value: 60,
+    color: 'purple',
+    label: 'Wxmaas Seedance',
+  },
+  {
     value: 55,
     color: 'green',
     label: 'Sora',

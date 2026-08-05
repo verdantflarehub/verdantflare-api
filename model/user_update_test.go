@@ -92,6 +92,31 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 	assert.Equal(t, "zh", got.GetSetting().Language)
 }
 
+func TestQuotaDecrementsNeverCrossZero(t *testing.T) {
+	setupUserUpdateTestState(t)
+	user := User{Id: 3, Username: "bounded-quota-user", Password: "password", Status: common.UserStatusEnabled, Quota: 100}
+	require.NoError(t, DB.Create(&user).Error)
+	token := Token{Id: 3, UserId: user.Id, Key: "sk-bounded", Status: common.TokenStatusEnabled, RemainQuota: 100}
+	require.NoError(t, DB.Create(&token).Error)
+
+	require.ErrorIs(t, DecreaseUserQuota(user.Id, 101, true), ErrQuotaInsufficient)
+	require.ErrorIs(t, DecreaseTokenQuota(token.Id, token.Key, 101), ErrQuotaInsufficient)
+
+	var storedUser User
+	require.NoError(t, DB.First(&storedUser, user.Id).Error)
+	assert.Equal(t, 100, storedUser.Quota)
+	var storedToken Token
+	require.NoError(t, DB.First(&storedToken, token.Id).Error)
+	assert.Equal(t, 100, storedToken.RemainQuota)
+	assert.Zero(t, storedToken.UsedQuota)
+
+	require.NoError(t, DB.Model(&Token{}).Where("id = ?", token.Id).Update("used_quota", -1).Error)
+	require.ErrorIs(t, DecreaseTokenQuota(token.Id, token.Key, 1), ErrQuotaInsufficient)
+	require.NoError(t, DB.First(&storedToken, token.Id).Error)
+	assert.Equal(t, 100, storedToken.RemainQuota)
+	assert.Equal(t, -1, storedToken.UsedQuota)
+}
+
 func TestEnsureEmailAvailableRejectsExistingEmailCaseInsensitive(t *testing.T) {
 	setupUserUpdateTestState(t)
 
