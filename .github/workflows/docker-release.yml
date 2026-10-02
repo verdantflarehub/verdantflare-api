@@ -4,11 +4,11 @@ on:
   push:
     branches:
       - release
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: verdantflare
   IMAGE_VERSION: api-v1.0.0
-  IMAGE_TAG: api-v1.0.0-${{ github.sha }}
   BASE_IMG: ghcr.io/open-beagle/alpine:3
 
 concurrency:
@@ -95,6 +95,9 @@ jobs:
           username: ${{ secrets.REGISTRY_USER_ALIYUN }}
           password: ${{ secrets.REGISTRY_PASSWORD_ALIYUN }}
 
+      - name: Refuse an existing image tag
+        run: '! docker buildx imagetools inspect "registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}" >/dev/null 2>&1'
+
       - name: Build and push API multi-platform image
         uses: docker/build-push-action@v6
         with:
@@ -104,9 +107,7 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          tags: |
-            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          tags: registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
           build-args: |
             BASE_IMG=${{ env.BASE_IMG }}
           cache-from: type=gha
@@ -147,7 +148,6 @@ jobs:
       - name: Image build success
         run: |
           echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION} built and pushed successfully."
-          echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_TAG} built and pushed successfully."
           echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-amd64 built and pushed successfully."
           echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-arm64 built and pushed successfully."
 
@@ -192,7 +192,7 @@ jobs:
 
       - name: Update API deployment
         run: |
-          image="registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_TAG}"
+          image="registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}"
           kubectl set image deployment/new-api new-api="$image"
           kubectl rollout status deployment/new-api --timeout=5m
           deployed_image="$(kubectl get deployment/new-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="new-api")].image}')"
