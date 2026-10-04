@@ -265,7 +265,13 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 		"zz-token-tiered-visible-model":    `tier("base", p * 1 + c * 2)`,
 		"zz-token-tiered-empty-expr-model": "",
 	})
-	setupModelListControllerTestDB(t)
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-token-tiered-visible-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-token-tiered-empty-expr-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-token-tiered-missing-expr-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-token-unpriced-model", ChannelId: 1, Enabled: true},
+	}).Error)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -286,6 +292,43 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-tiered-empty-expr-model")
 	require.NotContains(t, ids, "zz-token-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-token-unpriced-model")
+}
+
+func TestListModelsTokenLimitExcludesDisabledOrOtherGroupModels(t *testing.T) {
+	withSelfUseModeDisabled(t)
+	withTieredBillingConfig(t, map[string]string{
+		"zz-token-active-model":      "tiered_expr",
+		"zz-token-disabled-model":    "tiered_expr",
+		"zz-token-other-group-model": "tiered_expr",
+	}, map[string]string{
+		"zz-token-active-model":      `tier("base", p * 1 + c * 2)`,
+		"zz-token-disabled-model":    `tier("base", p * 1 + c * 2)`,
+		"zz-token-other-group-model": `tier("base", p * 1 + c * 2)`,
+	})
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-token-active-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-token-disabled-model", ChannelId: 2, Enabled: false},
+		{Group: "vip", Model: "zz-token-other-group-model", ChannelId: 3, Enabled: true},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{
+		"zz-token-active-model":      true,
+		"zz-token-disabled-model":    true,
+		"zz-token-other-group-model": true,
+	})
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+	ids := decodeListModelsResponse(t, recorder)
+	require.Contains(t, ids, "zz-token-active-model")
+	require.NotContains(t, ids, "zz-token-disabled-model")
+	require.NotContains(t, ids, "zz-token-other-group-model")
 }
 
 func TestCheckUpdatePasswordRequiresCurrentPassword(t *testing.T) {

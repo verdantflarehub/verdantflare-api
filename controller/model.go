@@ -232,6 +232,15 @@ func ListModels(c *gin.Context, modelType int) {
 	ownerGroups := groups.ownerGroups
 	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
 	if modelLimitEnable {
+		// A token allowlist must not advertise models with no enabled ability in
+		// the token's group. The catalog uses this endpoint as its availability
+		// check, so returning the allowlist alone would publish offline models.
+		enabledModels := make(map[string]bool)
+		for _, group := range ownerGroups {
+			for _, name := range model.GetGroupEnabledModels(group) {
+				enabledModels[name] = true
+			}
+		}
 		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 		var tokenModelLimit map[string]bool
 		if ok {
@@ -240,6 +249,9 @@ func ListModels(c *gin.Context, modelType int) {
 			tokenModelLimit = map[string]bool{}
 		}
 		for allowModel, _ := range tokenModelLimit {
+			if !enabledModels[allowModel] {
+				continue
+			}
 			if !acceptUnsetRatioModel {
 				if !helper.HasModelBillingConfig(allowModel) {
 					continue
