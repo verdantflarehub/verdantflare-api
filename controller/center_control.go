@@ -25,6 +25,7 @@ import (
 
 var centerOrganizationIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{1,79}$`)
 var centerRequestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{16,80}$`)
+var centerExperienceModelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 
 const centerExperienceTokenPrefix = "__vf_center_experience__"
 
@@ -299,7 +300,7 @@ func CenterProbeKey(c *gin.Context) {
 
 // CenterExperienceChat runs one bounded, organization-billed text request.
 // The browser never receives a gateway token; the durable token exists only
-// inside new-api and is restricted to the first approved experience model.
+// inside new-api and is restricted to the exact model approved by Control.
 func CenterExperienceChat(c *gin.Context) {
 	organizationID, ok := centerOrganizationID(c)
 	if !ok {
@@ -312,20 +313,42 @@ func CenterExperienceChat(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Prompt string `json:"prompt"`
+		ModelID string `json:"modelId"`
+		Prompt  string `json:"prompt"`
 	}
 	if err := common.Unmarshal(inputBytes, &input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid prompt request"})
 		return
 	}
 	input.Prompt = strings.TrimSpace(input.Prompt)
+	// Keep the existing Control deployment working while new-api rolls out first.
+	// New Control always sends an explicit model ID; remove this legacy default
+	// after all Control instances have moved to the new request contract.
+	if input.ModelID == "" {
+		input.ModelID = "deepseek-flash"
+	}
+	if !centerExperienceModelPattern.MatchString(input.ModelID) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid model ID"})
+		return
+	}
 	if input.Prompt == "" || len([]rune(input.Prompt)) > 2000 {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "prompt must contain 1–2000 characters"})
 		return
 	}
-	const experienceModel = "deepseek-flash"
-	if !centerAvailableModels()[experienceModel] {
+	if !centerAvailableModels()[input.ModelID] {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "experience model is unavailable"})
+		return
+	}
+	model.GetPricing()
+	chatSupported := false
+	for _, endpoint := range model.GetModelSupportEndpointTypes(input.ModelID) {
+		if endpoint == constant.EndpointTypeOpenAI {
+			chatSupported = true
+			break
+		}
+	}
+	if !chatSupported {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "model does not support chat completions"})
 		return
 	}
 	user, err := model.GetCenterUser(organizationID)
@@ -346,9 +369,9 @@ func CenterExperienceChat(c *gin.Context) {
 		return
 	}
 	month := time.Now().UTC().Format("2006-01")
-	digest := sha256.Sum256([]byte(organizationID + ":" + experienceModel + ":" + month))
+	digest := sha256.Sum256([]byte(organizationID + ":" + input.ModelID + ":" + month))
 	requestID := "center_experience_" + hex.EncodeToString(digest[:16])
-	token, err := model.CreateCenterToken(organizationID, requestID, centerExperienceTokenPrefix+month, []string{experienceModel}, 32)
+	token, err := model.CreateCenterToken(organizationID, requestID, centerExperienceTokenPrefix+month, []string{input.ModelID}, 32)
 	if err != nil {
 		centerError(c, err)
 		return
@@ -365,7 +388,7 @@ func CenterExperienceChat(c *gin.Context) {
 		return
 	}
 	relayBody, err := common.Marshal(gin.H{
-		"model": experienceModel, "stream": false, "max_tokens": 256,
+		"model": input.ModelID, "stream": false, "max_tokens": 256,
 		"messages": []gin.H{{"role": "user", "content": input.Prompt}},
 	})
 	if err != nil {

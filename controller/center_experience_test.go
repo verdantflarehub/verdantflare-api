@@ -15,11 +15,12 @@ func TestCenterExperienceChatRejectsUnboundedOrInvalidInputBeforeRelay(t *testin
 		name, organization, body string
 		want                     int
 	}{
-		{name: "invalid organization", organization: "..", body: `{"prompt":"hello"}`, want: http.StatusBadRequest},
+		{name: "invalid organization", organization: "..", body: `{"modelId":"deepseek-flash","prompt":"hello"}`, want: http.StatusBadRequest},
 		{name: "invalid json", organization: "org_test", body: `{`, want: http.StatusBadRequest},
-		{name: "empty prompt", organization: "org_test", body: `{"prompt":"  "}`, want: http.StatusBadRequest},
-		{name: "over character limit", organization: "org_test", body: `{"prompt":"` + strings.Repeat("中", 2001) + `"}`, want: http.StatusBadRequest},
-		{name: "over body limit", organization: "org_test", body: `{"prompt":"` + strings.Repeat("a", 17000) + `"}`, want: http.StatusRequestEntityTooLarge},
+		{name: "invalid model", organization: "org_test", body: `{"modelId":"https://upstream.test","prompt":"hello"}`, want: http.StatusBadRequest},
+		{name: "empty prompt", organization: "org_test", body: `{"modelId":"deepseek-flash","prompt":"  "}`, want: http.StatusBadRequest},
+		{name: "over character limit", organization: "org_test", body: `{"modelId":"deepseek-flash","prompt":"` + strings.Repeat("中", 2001) + `"}`, want: http.StatusBadRequest},
+		{name: "over body limit", organization: "org_test", body: `{"modelId":"deepseek-flash","prompt":"` + strings.Repeat("a", 17000) + `"}`, want: http.StatusRequestEntityTooLarge},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			writer := httptest.NewRecorder()
