@@ -23,7 +23,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var centerOrganizationIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,79}$`)
+var centerOrganizationIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{1,79}$`)
 var centerRequestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{16,80}$`)
 
 const centerExperienceTokenPrefix = "__vf_center_experience__"
