@@ -272,6 +272,8 @@ func migrateDB() error {
 		&Channel{},
 		&Token{},
 		&User{},
+		&CenterAccount{},
+		&CenterOperation{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},

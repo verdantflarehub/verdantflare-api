@@ -42,6 +42,8 @@ func TestMain(m *testing.M) {
 		&QuotaCacheInvalidationOutbox{},
 		&User{},
 		&Token{},
+		&CenterAccount{},
+		&CenterOperation{},
 		&Log{},
 		&Channel{},
 		&QuotaData{},

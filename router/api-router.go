@@ -229,6 +229,17 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		registerChannelRoutes(apiRouter)
 		registerAuthzRoutes(apiRouter)
+		centerRoute := apiRouter.Group("/internal/center/organizations")
+		centerRoute.Use(middleware.CenterControlAuth())
+		{
+			centerRoute.GET("/:organizationID", controller.CenterOrganizationBalance)
+			centerRoute.POST("/:organizationID/credit-grants", controller.CenterGrantCredit)
+			centerRoute.PUT("/:organizationID/status", controller.CenterSetOrganizationStatus)
+			centerRoute.GET("/:organizationID/keys", controller.CenterListKeys)
+			centerRoute.POST("/:organizationID/keys", controller.CenterCreateKey)
+			centerRoute.POST("/:organizationID/keys/:tokenID/revoke", controller.CenterRevokeKey)
+			centerRoute.GET("/:organizationID/keys/:tokenID/probe", controller.CenterProbeKey)
+		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
 		{
