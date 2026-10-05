@@ -101,6 +101,26 @@ func CenterGrantCredit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": centerBalance(user)})
 }
 
+func CenterListCreditGrants(c *gin.Context) {
+	id, ok := centerOrganizationID(c)
+	if !ok {
+		return
+	}
+	operations, err := model.ListCenterCreditGrants(id)
+	if err != nil {
+		centerError(c, err)
+		return
+	}
+	items := make([]gin.H, 0, len(operations))
+	for _, operation := range operations {
+		items = append(items, gin.H{
+			"id": operation.RequestID, "amountCents": operation.AmountCents,
+			"createdAt": operation.CreatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
 func CenterSetOrganizationStatus(c *gin.Context) {
 	id, ok := centerOrganizationID(c)
 	if !ok {

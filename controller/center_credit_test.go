@@ -37,4 +37,13 @@ func TestCenterCreditAcceptsExistingMixedCaseOrganizationID(t *testing.T) {
 	CenterOrganizationBalance(balanceContext)
 	require.Equal(t, http.StatusOK, balanceWriter.Code, balanceWriter.Body.String())
 	assert.Contains(t, balanceWriter.Body.String(), `"remainingQuota":500000`)
+	listWriter := httptest.NewRecorder()
+	listContext, _ := gin.CreateTestContext(listWriter)
+	listContext.Request = httptest.NewRequest(http.MethodGet, "/api/internal/center/organizations/"+organizationID+"/credit-grants", nil)
+	listContext.Params = gin.Params{{Key: "organizationID", Value: organizationID}}
+	CenterListCreditGrants(listContext)
+	require.Equal(t, http.StatusOK, listWriter.Code, listWriter.Body.String())
+	assert.Contains(t, listWriter.Body.String(), `"amountCents":100`)
+	assert.Contains(t, listWriter.Body.String(), `"id":"credit_mixed_case_org_001"`)
+	assert.NotContains(t, listWriter.Body.String(), "test-admin")
 }

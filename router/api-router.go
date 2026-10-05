@@ -234,6 +234,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			centerRoute.GET("/:organizationID", controller.CenterOrganizationBalance)
 			centerRoute.POST("/:organizationID/credit-grants", controller.CenterGrantCredit)
+			centerRoute.GET("/:organizationID/credit-grants", controller.CenterListCreditGrants)
 			centerRoute.PUT("/:organizationID/status", controller.CenterSetOrganizationStatus)
 			centerRoute.GET("/:organizationID/keys", controller.CenterListKeys)
 			centerRoute.POST("/:organizationID/keys", controller.CenterCreateKey)

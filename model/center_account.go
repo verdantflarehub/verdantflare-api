@@ -66,6 +66,15 @@ func GetCenterExperienceCharge(organizationID, requestID string) (int, error) {
 	return log.Quota, nil
 }
 
+// ListCenterCreditGrants reads the gateway's durable, idempotent credit ledger.
+// The organization predicate is required even for internal callers.
+func ListCenterCreditGrants(organizationID string) ([]CenterOperation, error) {
+	operations := make([]CenterOperation, 0)
+	err := DB.Where("organization_id = ? AND kind = ?", organizationID, "credit").
+		Order("created_at DESC").Order("request_id DESC").Find(&operations).Error
+	return operations, err
+}
+
 func ensureCenterAccount(tx *gorm.DB, organizationID string) (CenterAccount, error) {
 	var account CenterAccount
 	err := tx.Where("organization_id = ?", organizationID).Take(&account).Error
