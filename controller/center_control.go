@@ -410,3 +410,23 @@ func CenterExperienceChat(c *gin.Context) {
 		Relay(c, types.RelayFormatOpenAI)
 	}
 }
+
+// CenterExperienceCharge exposes only the settled quota, never prompt, log
+// content or another organization's usage.
+func CenterExperienceCharge(c *gin.Context) {
+	organizationID, ok := centerOrganizationID(c)
+	if !ok {
+		return
+	}
+	requestID := c.Param("requestID")
+	if !centerRequestIDPattern.MatchString(requestID) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid request ID"})
+		return
+	}
+	quota, err := model.GetCenterExperienceCharge(organizationID, requestID)
+	if err != nil {
+		centerError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"billedQuota": quota}})
+}

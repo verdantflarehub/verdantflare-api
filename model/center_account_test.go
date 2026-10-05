@@ -62,3 +62,29 @@ func TestCenterCreditAndTokenAreOrganizationScopedAndRetrySafe(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, common.UserStatusDisabled, preFrozen.Status)
 }
+
+func TestCenterExperienceChargeIsSettledAndOrganizationScoped(t *testing.T) {
+	const requestID = "202610051016420000000000000001"
+	t.Cleanup(func() {
+		DB.Where("request_id = ?", requestID).Delete(&Log{})
+		for _, organizationID := range []string{"org_charge_a", "org_charge_b"} {
+			account, err := GetCenterAccount(organizationID)
+			if err == nil {
+				DB.Unscoped().Delete(&User{}, account.UserID)
+			}
+			DB.Where("organization_id = ?", organizationID).Delete(&CenterAccount{})
+			DB.Where("organization_id = ?", organizationID).Delete(&CenterOperation{})
+		}
+	})
+	userA, err := GrantCenterCredit("org_charge_a", "credit_charge_a_request_001", "test", 100)
+	require.NoError(t, err)
+	_, err = GrantCenterCredit("org_charge_b", "credit_charge_b_request_001", "test", 100)
+	require.NoError(t, err)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: userA.Id, Type: LogTypeConsume, RequestId: requestID, Quota: 362}).Error)
+
+	quota, err := GetCenterExperienceCharge("org_charge_a", requestID)
+	require.NoError(t, err)
+	require.Equal(t, 362, quota)
+	_, err = GetCenterExperienceCharge("org_charge_b", requestID)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}

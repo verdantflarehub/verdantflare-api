@@ -32,3 +32,12 @@ func TestCenterExperienceChatRejectsUnboundedOrInvalidInputBeforeRelay(t *testin
 		})
 	}
 }
+
+func TestCenterExperienceChargeRejectsInvalidRequestID(t *testing.T) {
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/internal/center/organizations/org_test/experience/charges/bad", nil)
+	ctx.Params = gin.Params{{Key: "organizationID", Value: "org_test"}, {Key: "requestID", Value: "bad"}}
+	CenterExperienceCharge(ctx)
+	require.Equal(t, http.StatusBadRequest, writer.Code)
+}

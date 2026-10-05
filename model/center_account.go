@@ -52,6 +52,20 @@ func GetCenterUser(organizationID string) (User, error) {
 	return user, err
 }
 
+// GetCenterExperienceCharge returns the settled consume-log quota for one
+// gateway request, scoped to the Center organization's own gateway user.
+func GetCenterExperienceCharge(organizationID, requestID string) (int, error) {
+	user, err := GetCenterUser(organizationID)
+	if err != nil {
+		return 0, err
+	}
+	var log Log
+	if err := LOG_DB.Select("quota").Where("user_id = ? AND request_id = ? AND type = ?", user.Id, requestID, LogTypeConsume).Take(&log).Error; err != nil {
+		return 0, err
+	}
+	return log.Quota, nil
+}
+
 func ensureCenterAccount(tx *gorm.DB, organizationID string) (CenterAccount, error) {
 	var account CenterAccount
 	err := tx.Where("organization_id = ?", organizationID).Take(&account).Error

@@ -240,6 +240,7 @@ func SetApiRouter(router *gin.Engine) {
 			centerRoute.POST("/:organizationID/keys/:tokenID/revoke", controller.CenterRevokeKey)
 			centerRoute.GET("/:organizationID/keys/:tokenID/probe", controller.CenterProbeKey)
 			centerRoute.POST("/:organizationID/experience/chat-completions", middleware.SystemPerformanceCheck(), controller.CenterExperienceChat)
+			centerRoute.GET("/:organizationID/experience/charges/:requestID", controller.CenterExperienceCharge)
 		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
