@@ -2,8 +2,6 @@ package controller
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -208,6 +206,11 @@ func centerTokenStatus(token model.Token) string {
 	return "active"
 }
 
+func centerExperienceKeyAllowsModel(token model.Token, modelID string) bool {
+	return !strings.HasPrefix(token.Name, centerExperienceTokenPrefix) && centerTokenStatus(token) == "active" &&
+		token.ModelLimitsEnabled && token.GetModelLimitsMap()[modelID] && token.Group == "default"
+}
+
 func CenterListKeys(c *gin.Context) {
 	id, ok := centerOrganizationID(c)
 	if !ok {
@@ -318,9 +321,8 @@ func CenterProbeKey(c *gin.Context) {
 	}})
 }
 
-// CenterExperienceChat runs one bounded, organization-billed text request.
-// The browser never receives a gateway token; the durable token exists only
-// inside new-api and is restricted to the exact model approved by Control.
+// CenterExperienceChat runs one bounded text request with the selected
+// organization Key. Neither its secret nor a service credential reaches the relay.
 func CenterExperienceChat(c *gin.Context) {
 	organizationID, ok := centerOrganizationID(c)
 	if !ok {
@@ -334,6 +336,7 @@ func CenterExperienceChat(c *gin.Context) {
 	}
 	var input struct {
 		ModelID string `json:"modelId"`
+		KeyID   int    `json:"keyId"`
 		Prompt  string `json:"prompt"`
 	}
 	if err := common.Unmarshal(inputBytes, &input); err != nil {
@@ -341,18 +344,16 @@ func CenterExperienceChat(c *gin.Context) {
 		return
 	}
 	input.Prompt = strings.TrimSpace(input.Prompt)
-	// Keep the existing Control deployment working while new-api rolls out first.
-	// New Control always sends an explicit model ID; remove this legacy default
-	// after all Control instances have moved to the new request contract.
-	if input.ModelID == "" {
-		input.ModelID = "deepseek-flash"
-	}
 	if !centerExperienceModelPattern.MatchString(input.ModelID) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid model ID"})
 		return
 	}
 	if input.Prompt == "" || len([]rune(input.Prompt)) > 2000 {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "prompt must contain 1–2000 characters"})
+		return
+	}
+	if input.KeyID < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "a user API key is required"})
 		return
 	}
 	if !centerAvailableModels()[input.ModelID] {
@@ -388,12 +389,17 @@ func CenterExperienceChat(c *gin.Context) {
 		c.JSON(http.StatusPaymentRequired, gin.H{"success": false, "message": "organization API credit is exhausted"})
 		return
 	}
-	month := time.Now().UTC().Format("2006-01")
-	digest := sha256.Sum256([]byte(organizationID + ":" + input.ModelID + ":" + month))
-	requestID := "center_experience_" + hex.EncodeToString(digest[:16])
-	token, err := model.CreateCenterToken(organizationID, requestID, centerExperienceTokenPrefix+month, []string{input.ModelID}, 32)
+	token, err := model.GetCenterToken(organizationID, input.KeyID)
 	if err != nil {
 		centerError(c, err)
+		return
+	}
+	if !centerExperienceKeyAllowsModel(token, input.ModelID) {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "API key is unavailable for this model"})
+		return
+	}
+	if !token.UnlimitedQuota && token.RemainQuota <= 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{"success": false, "message": "API key quota is exhausted"})
 		return
 	}
 	userCache, err := model.GetUserCache(user.Id)
