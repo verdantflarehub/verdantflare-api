@@ -70,3 +70,22 @@ func TestCenterModelOpsSnapshotRejectsInvalidModelID(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, recorder.Code)
 	}
 }
+
+func TestCenterModelOpsSnapshotRevisionIgnoresRuntimeChannelCounters(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	channel := model.Channel{Name: "probe-channel", Key: "supplier-secret", Models: "probe-model", Group: "center-internal"}
+	require.NoError(t, db.Create(&channel).Error)
+	before, status := centerModelOpsSnapshotData("probe-model")
+	require.Equal(t, http.StatusOK, status)
+	require.NoError(t, db.Model(&channel).Updates(map[string]any{
+		"used_quota": 500, "test_time": 1, "response_time": 75,
+		"balance": 2.5, "balance_updated_time": 2,
+	}).Error)
+	after, status := centerModelOpsSnapshotData("probe-model")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, before["revision"], after["revision"])
+	require.NoError(t, db.Model(&channel).Update("key", "rotated-supplier-secret").Error)
+	rotated, status := centerModelOpsSnapshotData("probe-model")
+	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, before["revision"], rotated["revision"])
+}

@@ -146,15 +146,26 @@ func centerModelOpsSnapshotData(modelID string) (gin.H, int) {
 		metadataView["description"] = metadata.Description
 		metadataView["endpoints"] = metadata.Endpoints
 	}
-	// Include the full matching channel state (including the upstream key) only
-	// in the digest so a credential rotation invalidates stale write revisions.
+	// Keep credential and route configuration in the digest, but exclude
+	// runtime counters. A paid probe increments UsedQuota; that must not
+	// invalidate its own configuration-bound receipt immediately after billing.
 	// Neither the key nor its standalone hash is returned to the caller.
+	revisionChannels := make([]*model.Channel, 0, len(matchedChannels))
+	for _, channel := range matchedChannels {
+		stable := *channel
+		stable.UsedQuota = 0
+		stable.TestTime = 0
+		stable.ResponseTime = 0
+		stable.Balance = 0
+		stable.BalanceUpdatedTime = 0
+		revisionChannels = append(revisionChannels, &stable)
+	}
 	revisionState, err := common.Marshal(struct {
 		Metadata model.Model      `json:"metadata"`
 		Channels []*model.Channel `json:"channels"`
 		Pricing  gin.H            `json:"pricing"`
 		Sequence uint64           `json:"sequence"`
-	}{Metadata: metadata, Channels: matchedChannels, Pricing: pricing, Sequence: modelRevision.Sequence})
+	}{Metadata: metadata, Channels: revisionChannels, Pricing: pricing, Sequence: modelRevision.Sequence})
 	if err != nil {
 		return nil, http.StatusServiceUnavailable
 	}
