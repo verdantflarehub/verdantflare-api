@@ -1,10 +1,7 @@
 package model
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -16,8 +13,8 @@ var ErrCenterModelProbeAlreadyStarted = errors.New("model probe request was alre
 // BeginCenterModelProbe creates a short-lived, non-public token that can spend
 // at most the caller-supplied USD 0.01 equivalent. Neither its
 // key nor its token ID is returned to Control or an MCP caller.
-func BeginCenterModelProbe(organizationID, modelID, requestID string, quotaLimit int) (Token, error) {
-	if quotaLimit <= 0 {
+func BeginCenterModelProbe(organizationID, modelID, requestID, gatewayRevision string, quotaLimit int) (Token, error) {
+	if quotaLimit <= 0 || len(gatewayRevision) != 64 {
 		return Token{}, errors.New("invalid probe quota limit")
 	}
 	var token Token
@@ -46,9 +43,8 @@ func BeginCenterModelProbe(organizationID, modelID, requestID string, quotaLimit
 		if err := tx.Create(&token).Error; err != nil {
 			return err
 		}
-		digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s", organizationID, modelID)))
 		return tx.Create(&CenterOperation{RequestID: requestID, OrganizationID: organizationID,
-			Kind: "model-probe", PayloadHash: hex.EncodeToString(digest[:]), Actor: modelID,
+			Kind: "model-probe", PayloadHash: gatewayRevision, Actor: modelID,
 			TokenID: token.Id, CreatedAt: time.Now().UTC()}).Error
 	})
 	return token, err

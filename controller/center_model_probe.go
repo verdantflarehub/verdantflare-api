@@ -85,7 +85,7 @@ func CenterModelOpsProbe(c *gin.Context) {
 		c.JSON(http.StatusPaymentRequired, gin.H{"success": false, "message": "internal probe budget is unavailable"})
 		return
 	}
-	token, err := model.BeginCenterModelProbe(organizationID, modelID, requestID, quotaLimit)
+	token, err := model.BeginCenterModelProbe(organizationID, modelID, requestID, expected, quotaLimit)
 	if err != nil {
 		if errors.Is(err, model.ErrCenterModelProbeAlreadyStarted) {
 			c.JSON(http.StatusConflict, gin.H{"success": false, "message": "probe already submitted; inspect charge by request ID"})
@@ -151,7 +151,7 @@ func CenterModelOpsProbeCharge(c *gin.Context) {
 	verified := quota > 0 && quota <= limit
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
-		"requestId": requestID, "modelId": operation.Actor, "billedQuota": quota,
+		"requestId": requestID, "modelId": operation.Actor, "gatewayRevision": operation.PayloadHash, "billedQuota": quota,
 		"billedUsd": float64(quota) / common.QuotaPerUnit, "maxUsd": 0.01, "verified": verified,
 	}})
 }
