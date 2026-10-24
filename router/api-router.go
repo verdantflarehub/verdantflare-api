@@ -243,6 +243,11 @@ func SetApiRouter(router *gin.Engine) {
 			centerRoute.POST("/:organizationID/experience/chat-completions", middleware.SystemPerformanceCheck(), controller.CenterExperienceChat)
 			centerRoute.GET("/:organizationID/experience/charges/:requestID", controller.CenterExperienceCharge)
 		}
+		centerModelRoute := apiRouter.Group("/internal/center/model-ops")
+		centerModelRoute.Use(middleware.CenterModelOpsAuth())
+		{
+			centerModelRoute.GET("/snapshot", controller.CenterModelOpsSnapshot)
+		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
 		{
