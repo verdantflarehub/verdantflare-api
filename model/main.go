@@ -274,6 +274,7 @@ func migrateDB() error {
 		&User{},
 		&CenterAccount{},
 		&CenterOperation{},
+		&CenterModelRevision{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},

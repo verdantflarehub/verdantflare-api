@@ -28,16 +28,28 @@ func CenterModelOpsSnapshot(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid model ID"})
 		return
 	}
+	data, status := centerModelOpsSnapshotData(modelID)
+	if status != http.StatusOK {
+		c.JSON(status, gin.H{"success": false, "message": "model configuration unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": data})
+}
+
+func centerModelOpsSnapshotData(modelID string) (gin.H, int) {
+	var modelRevision model.CenterModelRevision
+	revisionErr := model.DB.Where("model_id = ?", modelID).Take(&modelRevision).Error
+	if revisionErr != nil && !errors.Is(revisionErr, gorm.ErrRecordNotFound) {
+		return nil, http.StatusServiceUnavailable
+	}
 	var metadata model.Model
 	metaErr := model.DB.Where("model_name = ?", modelID).First(&metadata).Error
 	if metaErr != nil && !errors.Is(metaErr, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "model configuration unavailable"})
-		return
+		return nil, http.StatusServiceUnavailable
 	}
 	channels, err := model.GetAllChannels(0, 0, true, true)
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "channel configuration unavailable"})
-		return
+		return nil, http.StatusServiceUnavailable
 	}
 	type channelView struct {
 		ID                   int      `json:"id"`
@@ -141,14 +153,15 @@ func CenterModelOpsSnapshot(c *gin.Context) {
 		Metadata model.Model      `json:"metadata"`
 		Channels []*model.Channel `json:"channels"`
 		Pricing  gin.H            `json:"pricing"`
-	}{Metadata: metadata, Channels: matchedChannels, Pricing: pricing})
+		Sequence uint64           `json:"sequence"`
+	}{Metadata: metadata, Channels: matchedChannels, Pricing: pricing, Sequence: modelRevision.Sequence})
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "model revision unavailable"})
-		return
+		return nil, http.StatusServiceUnavailable
 	}
 	revisionDigest := sha256.Sum256(revisionState)
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+	return gin.H{
 		"modelId": modelID, "revision": hex.EncodeToString(revisionDigest[:]),
+		"sequence": modelRevision.Sequence,
 		"channels": views, "pricing": pricing, "metadata": metadataView,
-	}})
+	}, http.StatusOK
 }

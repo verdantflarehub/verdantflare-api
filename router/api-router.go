@@ -247,6 +247,9 @@ func SetApiRouter(router *gin.Engine) {
 		centerModelRoute.Use(middleware.CenterModelOpsAuth())
 		{
 			centerModelRoute.GET("/snapshot", controller.CenterModelOpsSnapshot)
+			centerModelRoute.POST("/billing/preview", controller.CenterModelOpsBillingPreview)
+			centerModelRoute.POST("/billing/apply", controller.CenterModelOpsBillingApply)
+			centerModelRoute.POST("/channel/attach-alias", controller.CenterModelOpsAttachAlias)
 		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
