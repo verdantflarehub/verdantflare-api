@@ -91,9 +91,9 @@ func centerModelOpsSnapshotData(modelID string) (gin.H, int) {
 		upstreamURL := ""
 		if channel.BaseURL != nil {
 			upstreamURL = *channel.BaseURL
-			if upstreamURL == "" && channel.Type >= 0 && channel.Type < len(constant.ChannelBaseURLs) {
-				upstreamURL = constant.ChannelBaseURLs[channel.Type]
-			}
+		}
+		if upstreamURL == "" && channel.Type >= 0 && channel.Type < len(constant.ChannelBaseURLs) {
+			upstreamURL = constant.ChannelBaseURLs[channel.Type]
 		}
 		upstreamHost := ""
 		if parsed, err := url.Parse(upstreamURL); err == nil {

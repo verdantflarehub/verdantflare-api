@@ -8,7 +8,7 @@ on:
 
 env:
   IMAGE_NAME: verdantflare
-  IMAGE_VERSION: api-v1.3.6
+  IMAGE_VERSION: ${{ github.ref == 'refs/heads/dev' && 'api-v1.3.7-dev.1' || 'api-v1.3.7' }}
   BASE_IMG: ghcr.io/open-beagle/alpine:3
 
 concurrency:
@@ -154,6 +154,7 @@ jobs:
   deploy:
     name: Deploy API to Kubernetes
     needs: build-and-push
+    if: github.ref == 'refs/heads/release'
     runs-on: ubuntu-latest
 
     steps:
