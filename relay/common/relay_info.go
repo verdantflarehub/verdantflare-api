@@ -86,7 +86,10 @@ type TokenCountMeta struct {
 }
 
 type RelayInfo struct {
-	TokenId           int
+	TokenId int
+	// ProbeQuotaLimit is set only by the authenticated Center model probe handler.
+	// The billing path must reject a settlement above this amount before debit.
+	ProbeQuotaLimit   int
 	TokenKey          string
 	TokenGroup        string
 	UserId            int
@@ -478,10 +481,11 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 
 		OriginModelName: common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
 
-		TokenId:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
-		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),
-		TokenUnlimited: common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
-		TokenGroup:     tokenGroup,
+		TokenId:         common.GetContextKeyInt(c, constant.ContextKeyTokenId),
+		ProbeQuotaLimit: c.GetInt("center_model_probe_quota_limit"),
+		TokenKey:        common.GetContextKeyString(c, constant.ContextKeyTokenKey),
+		TokenUnlimited:  common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
+		TokenGroup:      tokenGroup,
 
 		isFirstResponse: true,
 		RelayMode:       relayconstant.Path2RelayMode(c.Request.URL.Path),

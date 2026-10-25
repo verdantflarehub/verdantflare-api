@@ -388,6 +388,9 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
+	if relayInfo.ProbeQuotaLimit > 0 && quota > relayInfo.ProbeQuotaLimit {
+		return errors.New("center model probe reservation exceeds authorized budget")
+	}
 	if relayInfo.IsPlayground {
 		return nil
 	}
@@ -409,6 +412,9 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 }
 
 func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (err error) {
+	if relayInfo != nil && relayInfo.ProbeQuotaLimit > 0 && quota+preConsumedQuota > relayInfo.ProbeQuotaLimit {
+		return errors.New("center model probe settlement exceeds authorized budget")
+	}
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {

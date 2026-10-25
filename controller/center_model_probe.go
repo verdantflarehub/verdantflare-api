@@ -21,6 +21,30 @@ import (
 
 const centerModelProbeOrganizationEnv = "CENTER_MODEL_OPS_PROBE_ORGANIZATION_ID"
 
+// The tiered rule is intentionally pinned to the reviewed DeepSeek peak/off-
+// peak expression. An administrator changing the rule must re-review the
+// bound before another paid legacy probe is allowed.
+const centerV4ProProbeExpr = `(weekday("UTC") >= 1 && weekday("UTC") <= 5 && ((hour("UTC") >= 1 && hour("UTC") < 4) || (hour("UTC") >= 6 && hour("UTC") < 10))) ? tier("peak", p * 1.32 + cr * 0.044 + c * 3.96) : tier("off_peak", p * 0.66 + cr * 0.022 + c * 1.98)`
+
+func centerModelProbePriceBound(modelID, mode string, fixedPrice *float64, ratio, completion float64, expression string) bool {
+	const maxPromptTokens, maxOutputTokens, maxUSD = 512.0, 16.0, 0.01
+	if modelID != "deepseek-flash" && modelID != "deepseek-v4-pro" &&
+		mode == billing_setting.BillingModeRatio && fixedPrice != nil {
+		return *fixedPrice > 0 && *fixedPrice <= maxUSD
+	}
+	if modelID == "deepseek-flash" && mode == billing_setting.BillingModeRatio && fixedPrice == nil &&
+		ratio == 0.75 && completion == 1 {
+		return (maxPromptTokens*ratio+maxOutputTokens*ratio*completion)/common.QuotaPerUnit <= maxUSD
+	}
+	if modelID == "deepseek-v4-pro" && mode == billing_setting.BillingModeTieredExpr && fixedPrice == nil &&
+		strings.TrimSpace(expression) == centerV4ProProbeExpr {
+		// The pinned expression's peak rates dominate its off-peak and cache
+		// rates for this text-only request. No supplier credential is exposed.
+		return (maxPromptTokens*1.32+maxOutputTokens*3.96)/1_000_000 <= maxUSD
+	}
+	return false
+}
+
 // CenterModelOpsProbe performs one bounded, paid text call on the dedicated
 // center-internal route. A durable request ID prevents blind paid retries.
 func CenterModelOpsProbe(c *gin.Context) {
@@ -59,7 +83,17 @@ func CenterModelOpsProbe(c *gin.Context) {
 	}
 	pricing, _ := snapshot["pricing"].(gin.H)
 	price, priced := ratio_setting.GetModelPriceCopy()[modelID]
-	if pricing["billingMode"] != billing_setting.BillingModeRatio || !priced || price <= 0 || price > 0.01 ||
+	var fixedPrice *float64
+	if priced {
+		fixedPrice = &price
+	}
+	ratio, explicitRatio, _ := ratio_setting.GetModelRatio(modelID)
+	if !explicitRatio {
+		ratio = 0
+	}
+	expr, _ := billing_setting.GetBillingExpr(modelID)
+	mode, _ := pricing["billingMode"].(string)
+	if !centerModelProbePriceBound(modelID, mode, fixedPrice, ratio, ratio_setting.GetCompletionRatio(modelID), expr) ||
 		!ratio_setting.ContainsGroupRatio("center-internal") || ratio_setting.GetGroupRatio("center-internal") != 1 {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "message": "bounded internal probe pricing is not ready"})
 		return
@@ -113,6 +147,7 @@ func CenterModelOpsProbe(c *gin.Context) {
 		return
 	}
 	c.Set(common.RequestIdKey, requestID)
+	c.Set("center_model_probe_quota_limit", quotaLimit)
 	c.Header(common.RequestIdKey, requestID)
 	c.Request.Body = io.NopCloser(bytes.NewReader(relayBody))
 	c.Request.ContentLength = int64(len(relayBody))

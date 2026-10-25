@@ -251,6 +251,8 @@ func SetApiRouter(router *gin.Engine) {
 			centerModelRoute.POST("/billing/apply", controller.CenterModelOpsBillingApply)
 			centerModelRoute.POST("/channel/attach-alias", controller.CenterModelOpsAttachAlias)
 			centerModelRoute.POST("/channel/create", controller.CenterModelOpsCreateChannel)
+			centerModelRoute.POST("/channel/prepare-legacy", controller.CenterModelOpsPrepareLegacy)
+			centerModelRoute.POST("/channel/recover-legacy", controller.CenterModelOpsRecoverLegacy)
 			centerModelRoute.POST("/channel/update", controller.CenterModelOpsUpdateChannel)
 			centerModelRoute.GET("/group/preview", controller.CenterModelOpsGroupPreview)
 			centerModelRoute.POST("/group/apply", controller.CenterModelOpsGroupApply)

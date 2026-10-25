@@ -14,6 +14,7 @@ type centerPublicRouteInput struct {
 	ModelID                 string `json:"modelId"`
 	SourceChannelID         int    `json:"sourceChannelId"`
 	PublicChannelID         int    `json:"publicChannelId"`
+	LegacyChannelID         int    `json:"legacyChannelId"`
 	CatalogToken            string `json:"catalogToken"`
 	RequestID               string `json:"requestId"`
 	ExpectedGatewayRevision string `json:"expectedGatewayRevision"`
@@ -26,7 +27,7 @@ func centerPublicRouteRequest(c *gin.Context, activate bool) (centerPublicRouteI
 		return centerPublicRouteInput{}, false
 	}
 	for key := range raw {
-		if key != "modelId" && key != "sourceChannelId" && key != "publicChannelId" && key != "catalogToken" && key != "requestId" && key != "expectedGatewayRevision" {
+		if key != "modelId" && key != "sourceChannelId" && key != "publicChannelId" && key != "legacyChannelId" && key != "catalogToken" && key != "requestId" && key != "expectedGatewayRevision" {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "unsupported public route field"})
 			return centerPublicRouteInput{}, false
 		}
@@ -38,7 +39,8 @@ func centerPublicRouteRequest(c *gin.Context, activate bool) (centerPublicRouteI
 	}
 	var input centerPublicRouteInput
 	if err := common.Unmarshal(encoded, &input); err != nil || !centerModelIDPattern.MatchString(input.ModelID) ||
-		strings.Contains(input.ModelID, "..") || input.SourceChannelID <= 0 ||
+		strings.Contains(input.ModelID, "..") || input.SourceChannelID <= 0 || input.LegacyChannelID < 0 ||
+		(input.LegacyChannelID > 0 && input.ModelID != "deepseek-flash" && input.ModelID != "deepseek-v4-pro") ||
 		(activate && input.PublicChannelID <= 0) || (!activate && input.PublicChannelID != 0) ||
 		(activate && input.CatalogToken != "") || (!activate && (!strings.HasPrefix(input.CatalogToken, "sk-") || len(input.CatalogToken) < 24 || len(input.CatalogToken) > 160)) ||
 		!centerRequestIDPattern.MatchString(input.RequestID) || len(input.ExpectedGatewayRevision) != 64 {
@@ -61,8 +63,16 @@ func CenterModelOpsStagePublicRoute(c *gin.Context) {
 	sequence := before["sequence"].(uint64)
 	revisionMatches := before["revision"] == input.ExpectedGatewayRevision
 	hash := model.CenterPublicRouteStagePayloadHash(input.ModelID, input.SourceChannelID, input.CatalogToken)
-	publicID, replayed, err := model.StageCenterPublicRoute(input.ModelID, input.SourceChannelID, input.CatalogToken, input.RequestID, hash,
-		func(current uint64) bool { return revisionMatches && current == sequence })
+	stage := func() (int, bool, error) {
+		if input.LegacyChannelID > 0 {
+			hash = model.CenterLegacyPublicRouteStagePayloadHash(input.ModelID, input.SourceChannelID, input.LegacyChannelID, input.CatalogToken)
+			return model.StageCenterLegacyPublicRoute(input.ModelID, input.SourceChannelID, input.LegacyChannelID,
+				input.CatalogToken, input.RequestID, hash, func(current uint64) bool { return revisionMatches && current == sequence })
+		}
+		return model.StageCenterPublicRoute(input.ModelID, input.SourceChannelID, input.CatalogToken, input.RequestID, hash,
+			func(current uint64) bool { return revisionMatches && current == sequence })
+	}
+	publicID, replayed, err := stage()
 	if err != nil {
 		centerPublicRouteError(c, err)
 		return
@@ -83,8 +93,16 @@ func CenterModelOpsActivatePublicRoute(c *gin.Context) {
 	sequence := before["sequence"].(uint64)
 	revisionMatches := before["revision"] == input.ExpectedGatewayRevision
 	hash := model.CenterPublicRoutePayloadHash(input.ModelID, input.SourceChannelID, input.PublicChannelID)
-	replayed, err := model.ActivateCenterPublicRoute(input.ModelID, input.SourceChannelID, input.PublicChannelID,
-		input.RequestID, hash, func(current uint64) bool { return revisionMatches && current == sequence })
+	activate := func() (bool, error) {
+		if input.LegacyChannelID > 0 {
+			hash = model.CenterLegacyPublicRoutePayloadHash(input.ModelID, input.SourceChannelID, input.PublicChannelID, input.LegacyChannelID)
+			return model.ActivateCenterLegacyPublicRoute(input.ModelID, input.SourceChannelID, input.PublicChannelID, input.LegacyChannelID,
+				input.RequestID, hash, func(current uint64) bool { return revisionMatches && current == sequence })
+		}
+		return model.ActivateCenterPublicRoute(input.ModelID, input.SourceChannelID, input.PublicChannelID,
+			input.RequestID, hash, func(current uint64) bool { return revisionMatches && current == sequence })
+	}
+	replayed, err := activate()
 	if err != nil {
 		centerPublicRouteError(c, err)
 		return

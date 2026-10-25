@@ -48,6 +48,9 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	if actualQuota < 0 || actualQuota > common.MaxQuota {
 		return errors.New("actual quota is outside the supported range")
 	}
+	if s.relayInfo.ProbeQuotaLimit > 0 && actualQuota > s.relayInfo.ProbeQuotaLimit {
+		return errors.New("center model probe settlement exceeds authorized budget")
+	}
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
 		s.settled = true

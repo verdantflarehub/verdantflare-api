@@ -359,6 +359,17 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
 		}
 	}
+	if !centerModelProbeWithinBounds(relayInfo, summary, tieredBillingApplied) {
+		// A supplier response outside the reviewed bound must never turn an
+		// internal probe into an uncapped wallet or token debit. Do not write
+		// a normal consume record that could be mistaken for a verified probe.
+		if relayInfo.Billing != nil {
+			relayInfo.Billing.Refund(ctx)
+		}
+		logger.LogError(ctx, fmt.Sprintf("center model probe exceeded reviewed usage or settlement bound: request_id=%s model=%s",
+			relayInfo.RequestId, relayInfo.OriginModelName))
+		return
+	}
 
 	if summary.WebSearchCallCount > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Web Search 调用 %d 次，调用花费 %s", summary.WebSearchCallCount, decimal.NewFromFloat(summary.WebSearchPrice).Mul(decimal.NewFromInt(int64(summary.WebSearchCallCount))).Div(decimal.NewFromInt(1000)).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
@@ -492,4 +503,14 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
 	})
+}
+
+func centerModelProbeWithinBounds(info *relaycommon.RelayInfo, summary textQuotaSummary, tieredApplied bool) bool {
+	if info.ProbeQuotaLimit <= 0 {
+		return true
+	}
+	return summary.Quota >= 0 && summary.Quota <= info.ProbeQuotaLimit &&
+		summary.PromptTokens >= 0 && summary.PromptTokens <= 512 &&
+		summary.CompletionTokens >= 0 && summary.CompletionTokens <= 16 &&
+		(info.TieredBillingSnapshot == nil || tieredApplied)
 }
