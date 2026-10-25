@@ -512,5 +512,6 @@ func centerModelProbeWithinBounds(info *relaycommon.RelayInfo, summary textQuota
 	return summary.Quota >= 0 && summary.Quota <= info.ProbeQuotaLimit &&
 		summary.PromptTokens >= 0 && summary.PromptTokens <= 512 &&
 		summary.CompletionTokens >= 0 && summary.CompletionTokens <= 16 &&
-		(info.TieredBillingSnapshot == nil || tieredApplied)
+		(info.TieredBillingSnapshot == nil || tieredApplied) &&
+		(info.OriginModelName != "deepseek-v4-pro" || tieredApplied)
 }

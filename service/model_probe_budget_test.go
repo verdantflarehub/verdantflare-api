@@ -32,6 +32,10 @@ func TestCenterModelProbeUsageBoundFailsClosed(t *testing.T) {
 	}
 	info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: "tiered_expr"}
 	assert.False(t, centerModelProbeWithinBounds(info, valid, false))
+	info.TieredBillingSnapshot = nil
+	info.OriginModelName = "deepseek-v4-pro"
+	assert.False(t, centerModelProbeWithinBounds(info, valid, false))
+	assert.True(t, centerModelProbeWithinBounds(info, valid, true))
 }
 func (*probeFundingSpy) Refund() error { return nil }
 
