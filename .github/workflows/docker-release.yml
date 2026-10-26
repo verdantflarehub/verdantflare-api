@@ -6,8 +6,12 @@ on:
       - release
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 env:
-  IMAGE_NAME: verdantflare
+  IMAGE_NAME: ghcr.io/verdantflarehub/verdantflare-api
   IMAGE_VERSION: ${{ github.ref == 'refs/heads/dev' && 'api-v1.3.8-dev.2' || 'api-v1.3.8' }}
   BASE_IMG: ghcr.io/open-beagle/alpine:3
 
@@ -88,15 +92,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Aliyun Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: registry.cn-qingdao.aliyuncs.com
-          username: ${{ secrets.REGISTRY_USER_ALIYUN }}
-          password: ${{ secrets.REGISTRY_PASSWORD_ALIYUN }}
-
       - name: Refuse an existing image tag
-        run: '! docker buildx imagetools inspect "registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}" >/dev/null 2>&1'
+        run: '! docker buildx imagetools inspect "${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}" >/dev/null 2>&1'
 
       - name: Build and push API multi-platform image
         uses: docker/build-push-action@v6
@@ -107,7 +104,7 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          tags: registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
           build-args: |
             BASE_IMG=${{ env.BASE_IMG }}
           cache-from: type=gha
@@ -123,7 +120,7 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-amd64
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-amd64
           build-args: |
             BASE_IMG=${{ env.BASE_IMG }}
           cache-from: type=gha
@@ -139,7 +136,7 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            registry.cn-qingdao.aliyuncs.com/wod/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-arm64
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-arm64
           build-args: |
             BASE_IMG=${{ env.BASE_IMG }}
           cache-from: type=gha
@@ -147,9 +144,9 @@ jobs:
 
       - name: Image build success
         run: |
-          echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION} built and pushed successfully."
-          echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-amd64 built and pushed successfully."
-          echo "registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}-arm64 built and pushed successfully."
+          echo "${IMAGE_NAME}:${IMAGE_VERSION} built and pushed successfully."
+          echo "${IMAGE_NAME}:${IMAGE_VERSION}-amd64 built and pushed successfully."
+          echo "${IMAGE_NAME}:${IMAGE_VERSION}-arm64 built and pushed successfully."
 
   deploy:
     name: Deploy API to Kubernetes
@@ -180,8 +177,7 @@ jobs:
               --embed-certs=true
           else
             kubectl config set-cluster verdantflare \
-              --server="$KUBERNETES_SERVER" \
-              --insecure-skip-tls-verify=true
+              --server="$KUBERNETES_SERVER"
           fi
 
           kubectl config set-credentials github-actions --token="$KUBERNETES_TOKEN"
@@ -191,9 +187,21 @@ jobs:
             --namespace=verdantflare
           kubectl config use-context verdantflare
 
-      - name: Update API deployment
+      - name: Configure GHCR pull secret and update API deployment
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          image="registry.cn-qingdao.aliyuncs.com/wod/${IMAGE_NAME}:${IMAGE_VERSION}"
+          set -eu
+          kubectl create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username="$GHCR_USER" \
+            --docker-password="$GHCR_TOKEN" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl patch serviceaccount default \
+            -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+
+          image="${IMAGE_NAME}:${IMAGE_VERSION}"
           kubectl set image deployment/new-api new-api="$image"
           kubectl rollout status deployment/new-api --timeout=5m
           deployed_image="$(kubectl get deployment/new-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="new-api")].image}')"
